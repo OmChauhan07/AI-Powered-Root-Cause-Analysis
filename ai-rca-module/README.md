@@ -1,6 +1,6 @@
-# AIVOA.AI – AI-Powered Root Cause Analysis (RCA) Module
+# AI RCA Module — AI-Powered Root Cause Analysis
 
-Enterprise-grade full-stack foundation for the **AI-Powered Root Cause Analysis (RCA) Module**. Built with a modular, scalable architecture to ingest system telemetry, analyze failure modes, orchestrate AI-driven hypothesis testing via LangGraph and Groq, and deliver actionable root cause diagnoses through an intuitive dashboard.
+AI-assisted pharmaceutical quality investigation, root cause analysis, and CAPA management for pharmaceutical manufacturers producing Active Pharmaceutical Ingredients (APIs). Built with a modular, scalable architecture to ingest system telemetry, analyze failure modes, orchestrate AI-driven hypothesis testing via LangGraph and Groq, and deliver actionable root cause diagnoses through an intuitive dashboard.
 
 ---
 
@@ -176,7 +176,7 @@ Returns diagnostic details regarding backend components:
   "services": {
     "api": {
       "status": "healthy",
-      "service": "AIVOA.AI - Root Cause Analysis (RCA) Module"
+      "service": "Root Cause Analysis (RCA) Module"
     },
     "database": {
       "status": "connected",

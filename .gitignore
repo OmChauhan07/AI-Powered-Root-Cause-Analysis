@@ -8,6 +8,15 @@ __pycache__/
 .env
 .env.*
 !.env.example
-*.log
+# Project Planning & Architecture Documentation
+docs/
+ai-rca-module/docs/
+
+# Uploads & Local Private Storage
+storage/
+uploads/
+ai-rca-module/backend/storage/
+
+# Logs & OS Files
 .DS_Store
 Thumbs.db

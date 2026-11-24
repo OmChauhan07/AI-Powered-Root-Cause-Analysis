@@ -1,6 +1,6 @@
-# AIVOA.AI – AI-Powered Root Cause Analysis (RCA) Module
+# AI RCA Module — AI-Powered Root Cause Analysis
 
-This repository contains the full-stack project for the **AIVOA.AI – AI-Powered Root Cause Analysis (RCA) Module**.
+AI-assisted pharmaceutical quality investigation, root cause analysis, and CAPA management.
 
 The complete project structure is located in the [`ai-rca-module/`](./ai-rca-module) directory:
 

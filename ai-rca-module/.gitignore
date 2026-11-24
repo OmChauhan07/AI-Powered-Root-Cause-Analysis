@@ -1,5 +1,5 @@
 # ==========================================================
-# AIVOA.AI RCA Module - Git Ignore Configuration
+# RCA Module - Git Ignore Configuration
 # ==========================================================
 
 # Operating System Files
@@ -9,6 +9,9 @@ desktop.ini
 *.swp
 *.swo
 *~
+
+# Project Planning & Architecture Documentation
+docs/
 
 # Environment & Secrets (NEVER commit secrets or API keys)
 .env
@@ -53,6 +56,10 @@ yarn-error.log*
 pnpm-debug.log*
 *.sqlite
 *.sqlite3
+
+# Uploads & Local Private Storage
+storage/
+uploads/
 
 # IDE & Editor Files
 .vscode/*
