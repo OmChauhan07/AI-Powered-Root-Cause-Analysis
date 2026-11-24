@@ -14,6 +14,7 @@ from app.ai.nodes import (
     analyze_evidence_and_gaps_node,
     rca_investigation_methods_node,
     assess_cause_evidence_matrix_node,
+    capa_recommendations_node,
     log_analyzer_node,
     hypothesis_generator_node,
     root_cause_identifier_node,
@@ -76,6 +77,20 @@ def build_cause_assessment_graph():
 
     compiled = builder.compile()
     logger.info("LangGraph Cause/Evidence Assessment workflow compiled successfully.")
+    return compiled
+
+
+def build_capa_graph():
+    """Builds and compiles the CAPA action recommendations LangGraph workflow."""
+    builder = StateGraph(RCAState)
+
+    builder.add_node("capa_recommendations", capa_recommendations_node)
+
+    builder.add_edge(START, "capa_recommendations")
+    builder.add_edge("capa_recommendations", END)
+
+    compiled = builder.compile()
+    logger.info("LangGraph CAPA Recommendations workflow compiled successfully.")
     return compiled
 
 

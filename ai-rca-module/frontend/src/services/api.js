@@ -203,4 +203,50 @@ export const fetchCauseAssessmentMatrix = async (investigationId) => {
   return response.data;
 };
 
+/**
+ * Trigger CAPA action recommendations generation
+ * Calls POST /api/investigations/{investigationId}/capa-suggestions
+ */
+export const triggerCapaGeneration = async (investigationId, causeCandidateIds = []) => {
+  const response = await apiClient.post(`/api/investigations/${investigationId}/capa-suggestions`, {
+    cause_candidate_ids: causeCandidateIds,
+    include_followup_investigations: true,
+  });
+  return response.data;
+};
+
+/**
+ * Fetch stored CAPA action recommendations
+ * Calls GET /api/investigations/{investigationId}/capa-actions
+ */
+export const fetchCapaActions = async (investigationId) => {
+  const response = await apiClient.get(`/api/investigations/${investigationId}/capa-actions`);
+  return response.data;
+};
+
+/**
+ * Review, accept, reject, or edit a CAPA action item (Human-in-the-Loop)
+ * Calls PATCH /api/investigations/{investigationId}/capa-actions/{actionId}
+ */
+export const reviewCapaAction = async (
+  investigationId,
+  actionId,
+  reviewStatus,
+  actionText = null,
+  effectivenessCheck = null,
+  ownerRole = null,
+  dueDate = null,
+  reviewerNote = null
+) => {
+  const response = await apiClient.patch(`/api/investigations/${investigationId}/capa-actions/${actionId}`, {
+    review_status: reviewStatus,
+    action_text: actionText,
+    effectiveness_check: effectivenessCheck,
+    owner_role: ownerRole,
+    due_date: dueDate,
+    reviewer_note: reviewerNote,
+  });
+  return response.data;
+};
+
 export default apiClient;

@@ -56,6 +56,7 @@ class Investigation(Base):
     evidence_records = relationship("EvidenceRecord", back_populates="investigation", cascade="all, delete-orphan")
     gaps = relationship("InvestigationGap", back_populates="investigation", cascade="all, delete-orphan")
     cause_candidates = relationship("CauseCandidate", back_populates="investigation", cascade="all, delete-orphan")
+    capa_actions = relationship("CapaAction", back_populates="investigation", cascade="all, delete-orphan")
 
 
 class SourceDocument(Base):
@@ -175,6 +176,34 @@ class CauseCandidate(Base):
 
     # Relationships
     investigation = relationship("Investigation", back_populates="cause_candidates")
+    capa_actions = relationship("CapaAction", back_populates="cause_candidate")
+
+
+class CapaAction(Base):
+    """Corrective and Preventive Action (CAPA) recommendation."""
+
+    __tablename__ = "capa_actions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    investigation_id = Column(String(36), ForeignKey("investigations.id", ondelete="CASCADE"), nullable=False, index=True)
+    cause_candidate_id = Column(String(36), ForeignKey("cause_candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    action_type = Column(String(50), nullable=False)  # 'containment', 'corrective', 'preventive', 'investigation_followup'
+    title = Column(String(255), nullable=False)
+    action_text = Column(Text, nullable=False)
+    rationale = Column(Text, nullable=False)
+    owner_role = Column(String(100), nullable=True)  # Role title only, never employee names
+    due_date = Column(DateTime(timezone=True), nullable=True)
+    effectiveness_check = Column(Text, nullable=True)
+    review_status = Column(String(50), default="pending_review", nullable=False)  # 'pending_review', 'accepted', 'rejected', 'edited'
+    reviewer_note = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationships
+    investigation = relationship("Investigation", back_populates="capa_actions")
+    cause_candidate = relationship("CauseCandidate", back_populates="capa_actions")
+
 
 
 

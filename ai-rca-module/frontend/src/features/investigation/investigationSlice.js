@@ -164,6 +164,9 @@ export const investigationSlice = createSlice({
         }
       }
     },
+    setCapaRecommendations: (state, action) => {
+      state.capaRecommendations = action.payload;
+    },
     updateCapaActionStatus: (state, action) => {
       const { id, review_status, action_text, effectiveness_check } = action.payload;
       const actionItem = state.capaRecommendations.find((a) => a.id === id);
@@ -340,6 +343,7 @@ export const {
   setCauseEvidenceMatrix,
   updateFishboneCategory,
   updateCauseCandidateStatus,
+  setCapaRecommendations,
   updateCapaActionStatus,
   loadSyntheticSampleData,
   setExtractedFacts,

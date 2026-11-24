@@ -20,6 +20,7 @@ from app.ai.prompts import (
     EVIDENCE_AND_GAP_ANALYSIS_SYSTEM_PROMPT,
     RCA_METHODS_SYSTEM_PROMPT,
     CAUSE_EVIDENCE_ASSESSMENT_SYSTEM_PROMPT,
+    CAPA_RECOMMENDATIONS_SYSTEM_PROMPT,
 )
 from app.schemas.extraction import (
     IncidentExtractionResult,
@@ -474,14 +475,267 @@ def root_cause_identifier_node(state: RCAState) -> Dict[str, Any]:
 def recommendation_node(state: RCAState) -> Dict[str, Any]:
     """Node 5: Formulates actionable remediation and prevention recommendations."""
     logger.info("Recommendation Node invoked for incident: %s", state.get("investigation_id") or state.get("incident_id"))
-    recommendations = [
-        "Re-calibrate temperature transmitter TEMP-SENSOR-014.",
-        "Perform preventive maintenance on reactor cooling solenoid valve.",
-        "Update SOP-CRYST-04 to mandate secondary sensor verification before batch release.",
-    ]
+    capa_result = capa_recommendations_node(state)
+    capa_list = capa_result.get("capa_recommendations", [])
+    recommendations = [f"[{item.get('action_type', 'action').upper()}] {item.get('title')}: {item.get('action_text')}" for item in capa_list]
     return {
+        "capa_recommendations": capa_list,
         "recommendations": recommendations,
         "current_step": "workflow_complete",
+        "workflow_status": "complete",
+    }
+
+
+def capa_recommendations_node(state: RCAState) -> Dict[str, Any]:
+    """Node: Synthesizes evidence-linked Corrective, Preventive, Containment, and Follow-up actions.
+
+    Follows strict GxP rules:
+    - Distinguishes containment, corrective, preventive, and investigation follow-up actions.
+    - Assigns functional role titles only (never invented employee names).
+    - Proposes measurable effectiveness checks.
+    - Defers preventive actions when root causes are unverified hypotheses.
+    - Initializes all actions with review_status="pending_review".
+    """
+    logger.info("CAPA Recommendations Node invoked for investigation: %s", state.get("investigation_id"))
+    cause_candidates = state.get("cause_candidates", [])
+    evidence_records = state.get("evidence_records", [])
+    investigation_gaps = state.get("investigation_gaps", [])
+    incident_fields = state.get("incident_fields", {})
+    target_cause_ids = state.get("cause_candidate_ids", [])
+
+    llm = get_groq_llm()
+    if llm is not None:
+        try:
+            logger.info("Executing LangGraph CAPA generation via Groq LLM.")
+            return _execute_llm_capa(llm, cause_candidates, evidence_records, investigation_gaps, incident_fields, target_cause_ids)
+        except Exception as exc:
+            logger.error("LLM CAPA generation failed, falling back to deterministic GxP engine: %s", str(exc))
+
+    logger.info("Executing deterministic GxP CAPA recommendation engine.")
+    return _execute_deterministic_capa(cause_candidates, evidence_records, investigation_gaps, incident_fields, target_cause_ids)
+
+
+def _execute_llm_capa(
+    llm: Any,
+    cause_candidates: List[Dict[str, Any]],
+    evidence_records: List[Dict[str, Any]],
+    investigation_gaps: List[Dict[str, Any]],
+    incident_fields: Dict[str, Any],
+    target_cause_ids: List[str],
+) -> Dict[str, Any]:
+    """Invokes Groq LLM for CAPA action synthesis."""
+    payload = {
+        "incident": incident_fields,
+        "cause_candidates": cause_candidates,
+        "evidence_records": evidence_records,
+        "investigation_gaps": investigation_gaps,
+        "target_cause_ids": target_cause_ids,
+    }
+
+    messages = [
+        SystemMessage(content=CAPA_RECOMMENDATIONS_SYSTEM_PROMPT),
+        HumanMessage(content=f"Generate evidence-linked CAPA actions for this investigation:\n{json.dumps(payload, indent=2)}"),
+    ]
+
+    response = llm.invoke(messages)
+    content = response.content.strip()
+
+    json_match = re.search(r"\{.*\}", content, re.DOTALL)
+    if not json_match:
+        raise ValueError("No JSON object found in LLM CAPA output.")
+
+    parsed = json.loads(json_match.group(0))
+    capa_list = parsed.get("capa_recommendations", [])
+
+    # Enforce GxP safety: always set review_status to pending_review
+    for item in capa_list:
+        item["review_status"] = "pending_review"
+
+    return {
+        "capa_recommendations": capa_list,
+        "deferred_reason": parsed.get("deferred_reason"),
+        "warnings": parsed.get("warnings", []),
+        "current_step": "capa_recommendations_complete",
+        "workflow_status": "capa_ready",
+    }
+
+
+def _execute_deterministic_capa(
+    cause_candidates: List[Dict[str, Any]],
+    evidence_records: List[Dict[str, Any]],
+    investigation_gaps: List[Dict[str, Any]],
+    incident_fields: Dict[str, Any],
+    target_cause_ids: List[str],
+) -> Dict[str, Any]:
+    """Deterministic GxP CAPA recommendation engine."""
+    eq_id = incident_fields.get("equipment_id") or "TEMP-SENSOR-014"
+    batch_num = incident_fields.get("batch_number") or "BATCH-2026-014"
+    product_name = incident_fields.get("product_name") or "API-X"
+
+    # Filter by target IDs if supplied
+    relevant_candidates = cause_candidates
+    if target_cause_ids:
+        relevant_candidates = [c for c in cause_candidates if (c.get("id") or c.get("cause_id")) in target_cause_ids]
+
+    # Evaluate whether we have any confirmed or evidence-supported cause
+    supported_causes = [
+        c for c in relevant_candidates
+        if c.get("review_status") == "confirmed" or c.get("ai_status") == "evidence_supported_pending_review"
+    ]
+
+    capas = []
+    deferred_reason = None
+    warnings = []
+
+    # If NO causes are supported by evidence, defer preventive CAPA and generate follow-up actions
+    if not supported_causes and relevant_candidates:
+        deferred_reason = (
+            "Preventive CAPA deferred: No root cause candidate has been confirmed by reviewer or corroborated "
+            "by primary evidence. Priority is assigned to follow-up investigation actions to resolve empirical data gaps."
+        )
+        warnings.append("Root cause remains hypothetical. Permanent preventive measures cannot be justified until cause confirmation.")
+
+        # Immediate Containment
+        capas.append({
+            "action_type": "containment",
+            "title": f"Quarantine and Product Hold on {product_name} ({batch_num})",
+            "action_text": f"Place batch {batch_num} under physical quarantine with tamper-evident labeling and ERP non-conformance hold.",
+            "rationale": "Prevents distribution of out-of-specification material while investigation continues.",
+            "cause_candidate_id": None,
+            "owner_role": "Quality Assurance Operations Lead",
+            "due_date": None,
+            "effectiveness_check": "100% physical segregation verified in ERP/WMS with tamper-evident labels inspected.",
+            "review_status": "pending_review",
+        })
+
+        # Investigation Follow-up actions for open gaps
+        for g in investigation_gaps:
+            field = g.get("field_or_record", "unverified_data")
+            desc = g.get("description", "Gather additional telemetry")
+            capas.append({
+                "action_type": "investigation_followup",
+                "title": f"Investigation Follow-up: Audit {field.replace('_', ' ').title()}",
+                "action_text": f"Retrieve and analyze missing telemetry and records for {field}: {desc}.",
+                "rationale": "Required to test active hypotheses before closing root cause determination.",
+                "cause_candidate_id": None,
+                "owner_role": "Manufacturing Equipment Engineer",
+                "due_date": None,
+                "effectiveness_check": "Engineering dossier complete and verified by QA Investigator.",
+                "review_status": "pending_review",
+            })
+
+        return {
+            "capa_recommendations": capas,
+            "deferred_reason": deferred_reason,
+            "warnings": warnings,
+            "current_step": "capa_recommendations_complete",
+            "workflow_status": "capa_ready",
+        }
+
+    # Supported Cause Identified: Formulate Comprehensive GxP CAPA Plan
+    drift_cause = next(
+        (c for c in supported_causes if eq_id.lower() in c.get("candidate_text", "").lower() or "sensor" in c.get("candidate_text", "").lower() or "calibration" in c.get("candidate_text", "").lower()),
+        supported_causes[0] if supported_causes else None,
+    )
+    cause_id = (drift_cause.get("id") or drift_cause.get("cause_id")) if drift_cause else None
+
+    # 1. Immediate Containment Actions
+    capas.append({
+        "action_type": "containment",
+        "title": f"Quarantine and Product Hold: {product_name} Batch {batch_num}",
+        "action_text": f"Execute immediate physical and ERP inventory hold for API-X Batch {batch_num}. Apply quarantine status tags in raw materials and finished goods warehouse.",
+        "rationale": f"Prevents release or shipment of non-conforming batch exhibiting 98.1% purity (below 99.0% specification limit).",
+        "cause_candidate_id": cause_id,
+        "owner_role": "Quality Assurance Operations Lead",
+        "due_date": None,
+        "effectiveness_check": "100% physical segregation verified in ERP/WMS with tamper-evident quarantine physical signage confirmed.",
+        "review_status": "pending_review",
+    })
+
+    capas.append({
+        "action_type": "containment",
+        "title": f"Lock-Out / Tag-Out of Temperature Sensor {eq_id}",
+        "action_text": f"Apply formal Lock-Out/Tag-Out (LOTO) to temperature sensor {eq_id} and lock crystallizer bath heating/cooling automated controls.",
+        "rationale": f"Prevents initiation of subsequent manufacturing batches using out-of-tolerance instrument {eq_id}.",
+        "cause_candidate_id": cause_id,
+        "owner_role": "Maintenance Engineering Supervisor",
+        "due_date": None,
+        "effectiveness_check": "Physical tag-out log signed by QA Metrology; control system loop deactivated in SCADA.",
+        "review_status": "pending_review",
+    })
+
+    # 2. Corrective Actions (Direct fix for immediate failure mode)
+    capas.append({
+        "action_type": "corrective",
+        "title": f"Sensor Thermal Realignment & Accredited Three-Point Recalibration ({eq_id})",
+        "action_text": f"Dismantle sensor assembly {eq_id}, clean probe sheath, reapply approved high-stability thermal interface paste, and perform 3-point calibration (20°C, 50°C, 80°C) using certified reference standard.",
+        "rationale": f"Corrects observed +0.8°C thermal drift exceeding ±0.5°C tolerance limit that produced slower cooling trajectory.",
+        "cause_candidate_id": cause_id,
+        "owner_role": "Metrology & Instrumentation Lead",
+        "due_date": None,
+        "effectiveness_check": "As-left calibration certificate confirms measurement error <= ±0.2°C across full operating range.",
+        "review_status": "pending_review",
+    })
+
+    capas.append({
+        "action_type": "corrective",
+        "title": "HPLC Mother Liquor & Crystal Impurity Kinetics Characterization",
+        "action_text": "Conduct detailed HPLC impurity profile analysis on mother liquor and isolated crystals to verify isomer formation kinetics match slow crystallization model.",
+        "rationale": "Verifies that lower purity was caused by thermal trajectory delay rather than raw material contamination.",
+        "cause_candidate_id": cause_id,
+        "owner_role": "Quality Control Laboratory Manager",
+        "due_date": None,
+        "effectiveness_check": "Analytical testing report confirms identical impurity profile to historical slow-cooling kinetic model.",
+        "review_status": "pending_review",
+    })
+
+    # 3. Preventive Actions (Systemic elimination of recurrence risk)
+    capas.append({
+        "action_type": "preventive",
+        "title": "Automated CMMS/MES Calibration Expiration Batch Interlock",
+        "action_text": "Configure and validate an automated hard interlock in the Computerized Maintenance Management System (CMMS) and Manufacturing Execution System (MES) preventing batch order initiation if any assigned critical instrument has exceeded its scheduled recalibration due date.",
+        "rationale": "Eliminates systemic risk where maintenance turnaround delays permitted batch processing on an expired sensor.",
+        "cause_candidate_id": cause_id,
+        "owner_role": "Computerized Systems Validation (CSV) Lead",
+        "due_date": None,
+        "effectiveness_check": "Challenge testing confirms 100% of expired instrument simulated batch releases are blocked; zero overdue instrument runs in 90-day post-implementation audit.",
+        "review_status": "pending_review",
+    })
+
+    capas.append({
+        "action_type": "preventive",
+        "title": "Revision of Engineering SOP-ENG-012 for Turnaround Metrology",
+        "action_text": "Revise standard operating procedure SOP-ENG-012 to mandate interim dual-thermocouple verification following any turnaround maintenance on crystallization reactors, and introduce mandatory supervisory calibration sign-off prior to batch charging.",
+        "rationale": "Ensures mechanical shifts or thermal compound degradation during maintenance turnarounds are detected prior to commercial manufacturing.",
+        "cause_candidate_id": cause_id,
+        "owner_role": "Quality Engineering Specialist",
+        "due_date": None,
+        "effectiveness_check": "100% training completion documented in LMS; 100% compliance verified across subsequent 20 batch manufacturing records.",
+        "review_status": "pending_review",
+    })
+
+    # 4. Investigation Follow-up Actions (for open gaps if any)
+    for g in investigation_gaps:
+        if g.get("status") in ["not_provided", "unclear"]:
+            field = g.get("field_or_record", "maintenance_record")
+            capas.append({
+                "action_type": "investigation_followup",
+                "title": f"Investigation Follow-up: Verify {field.replace('_', ' ').title()}",
+                "action_text": f"Acquire and review secondary records for {field}: {g.get('description')}.",
+                "rationale": "Closes remaining empirical gap to corroborate multi-factor contribution.",
+                "cause_candidate_id": None,
+                "owner_role": "Manufacturing Equipment Engineer",
+                "due_date": None,
+                "effectiveness_check": "Audit report filed and approved in deviation dossier.",
+                "review_status": "pending_review",
+            })
+
+    return {
+        "capa_recommendations": capas,
+        "deferred_reason": None,
+        "warnings": [],
+        "current_step": "capa_recommendations_complete",
+        "workflow_status": "capa_ready",
     }
 
 
