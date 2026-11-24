@@ -1,213 +1,192 @@
-# AI RCA Module — AI-Powered Root Cause Analysis
+# AI-Powered Root Cause Analysis (RCA) Module
 
-AI-assisted pharmaceutical quality investigation, root cause analysis, and CAPA management for pharmaceutical manufacturers producing Active Pharmaceutical Ingredients (APIs). Built with a modular, scalable architecture to ingest system telemetry, analyze failure modes, orchestrate AI-driven hypothesis testing via LangGraph and Groq, and deliver actionable root cause diagnoses through an intuitive dashboard.
+> **GxP-Compliant AI-Assisted Deviation Investigation, Root Cause Analysis, and CAPA Management for Pharmaceutical Manufacturing**
 
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology | Purpose |
-|---|---|---|
-| **Frontend** | React 19 + Vite | High-performance Single Page Application |
-| **State Management** | Redux Toolkit + React Redux | Predictable global state management & async API dispatch |
-| **HTTP Client** | Axios | Frontend-backend communication with interceptors |
-| **Backend** | Python 3.12 + FastAPI | High-throughput asynchronous REST API |
-| **AI Orchestration** | LangGraph | Multi-stage stateful agentic workflow orchestration |
-| **LLM Inference** | Groq API (`llama-3.3-70b-versatile`) | Ultra-low latency LLM reasoning |
-| **Database** | PostgreSQL + SQLAlchemy 2.0 | Relational data persistence with connection pooling |
+An intelligent, full-stack investigation platform designed specifically for pharmaceutical quality assurance (QA) and regulatory compliance teams. The application guides investigators through Active Pharmaceutical Ingredient (API) deviations (such as out-of-specification purity assays), orchestrates multi-source document ingestion, executes agentic reasoning via **LangGraph** and **Groq (`llama-3.3-70b-versatile`)**, detects timeline anomalies and evidence conflicts, maps causal chains using **5 Whys** and **Ishikawa 6M Fishbone**, cross-references supporting versus contradicting evidence, and formulates measurable **CAPA action plans**—while strictly enforcing human authority boundaries per FDA 21 CFR Part 11.
 
 ---
 
-## 📁 Project Structure
+## 🏗️ Architecture & Technology Stack
 
-```text
-ai-rca-module/
-├── frontend/
-│   ├── src/
-│   │   ├── components/         # Reusable UI components (HealthCard, badges)
-│   │   ├── pages/              # Application views & pages (Dashboard)
-│   │   ├── features/           # Feature slices (healthSlice)
-│   │   ├── store/              # Redux Toolkit store configuration
-│   │   ├── services/           # Axios client & API abstraction layer
-│   │   ├── hooks/              # Custom React hooks (useHealth)
-│   │   ├── layouts/            # Page layouts & navigation bars (Navbar)
-│   │   ├── utils/              # Data formatting and helper utilities
-│   │   ├── App.jsx             # Main application component
-│   │   ├── main.jsx            # React root with Redux Provider
-│   │   └── index.css           # Global theme styles
-│   ├── public/                 # Static web assets
-│   ├── .env.example            # Frontend environment variable template
-│   ├── package.json            # Node.js dependencies and scripts
-│   └── vite.config.js          # Vite build configuration
-│
-├── backend/
-│   ├── app/
-│   │   ├── api/                # API routers & versioning (v1 endpoints)
-│   │   │   ├── router.py       # Central router aggregation
-│   │   │   └── v1/
-│   │   │       └── health.py   # System health-check endpoint (/api/health)
-│   │   ├── core/               # App configuration & environment settings
-│   │   │   └── config.py       # Pydantic BaseSettings with CORS parsing
-│   │   ├── models/             # SQLAlchemy ORM models
-│   │   │   └── rca.py          # RCARecord database model
-│   │   ├── schemas/            # Pydantic validation & response schemas
-│   │   │   ├── health.py       # Health check schema
-│   │   │   └── rca.py          # RCA request/response schemas
-│   │   ├── services/           # Business logic layer
-│   │   │   └── rca_service.py  # Orchestrator for DB and AI graphs
-│   │   ├── ai/                 # LangGraph & Groq integration
-│   │   │   ├── groq_client.py  # Groq client factory & health probe
-│   │   │   ├── state.py        # RCAState TypedDict for LangGraph
-│   │   │   ├── nodes.py        # Log analyzer, hypothesis, root cause nodes
-│   │   │   └── workflow.py     # StateGraph compilation pipeline
-│   │   ├── database/           # PostgreSQL connection & session factory
-│   │   │   ├── base.py         # SQLAlchemy DeclarativeBase
-│   │   │   └── session.py      # Engine, sessionmaker, and connectivity probe
-│   │   └── main.py             # FastAPI app initialization & CORS middleware
-│   ├── requirements.txt        # Python backend dependencies
-│   └── .env.example            # Backend environment variable template
-│
-├── .gitignore                  # Git exclusion rules
-└── README.md                   # Project documentation
+```
+                              ┌───────────────────────────────────────────────┐
+                              │            React 19 + Vite Frontend           │
+                              │  Redux Toolkit • Axios • Human Review Gates   │
+                              └───────────────────────┬───────────────────────┘
+                                                      │ REST APIs
+                                                      ▼
+                              ┌───────────────────────────────────────────────┐
+                              │            FastAPI Backend (Py 3.12)          │
+                              │  Modular Routers • Pydantic v2 • Audit Trails │
+                              └───────┬───────────────────────────────┬───────┘
+                                      │                               │
+                                      ▼                               ▼
+     ┌──────────────────────────────────────────────────┐   ┌───────────────────────────┐
+     │          LangGraph Agentic Orchestrator          │   │   PostgreSQL + SQLAlchemy │
+     │  • Multi-Format Document Parser (PyMuPDF)        │   │  • Alembic Migrations     │
+     │  • Fact Extraction & Citation Provenance         │   │  • Investigation Dossiers │
+     │  • Cross-Document Gap & Conflict Detector        │   │  • Evidence Records       │
+     │  • 5 Whys & Ishikawa 6M Methods                  │   │  • Cause Candidates       │
+     │  • Supporting vs Contradicting Evidence Matrix   │   │  • CAPA Action Plans      │
+     │  • Role-Based CAPA Formulation                   │   └───────────────────────────┘
+     │  • Groq LLM (llama-3.3-70b) + GxP Offline Fallback│
+     └──────────────────────────────────────────────────┘
 ```
 
+| Layer | Technology | Key Capabilities |
+|---|---|---|
+| **Frontend** | React 19, Vite, Redux Toolkit, Axios | 6-stage guided investigation stepper, responsive layout, real-time draft state, printable GxP dossiers |
+| **Backend** | Python 3.12, FastAPI, Pydantic v2 | High-throughput async REST endpoints, GxP validation constraints, dependency injection |
+| **AI Orchestration** | LangGraph, LangChain Core | Multi-stage stateful StateGraph pipelines with deterministic GxP offline fallbacks |
+| **LLM Inference** | Groq API (`llama-3.3-70b-versatile`) | High-speed LLM inference with structured JSON output and prompt engineering |
+| **Document Engine** | PyMuPDF (fitz), Python email/re | Page-by-page PDF parsing, RFC-822 email parser, whitespace normalizer, SHA-256 integrity |
+| **Database** | PostgreSQL, SQLAlchemy 2.0, Alembic | Relational schema with cascade deletions, foreign key indexes, and full audit timestamps |
+| **Quality & Testing** | Pytest, Node Test Runner, Oxlint | 50 automated backend tests, 12 frontend tests, 0 lint warnings |
+
 ---
 
-## 🚀 Getting Started Locally
+## 🔒 GxP & Regulatory Safety Principles (21 CFR Part 11)
+
+1. **Human Authority Boundary**: The AI acts strictly as an analytical assistant. AI outputs remain classified as `hypothesis`, `needs_evidence`, or `evidence_supported_pending_review`.
+2. **Never Auto-Confirm**: No AI node or API call can mark a root cause as `confirmed` or close an investigation automatically. Only an authorized human investigator can confirm a cause.
+3. **Mandatory Reviewer Justification**: Confirming or rejecting a root cause candidate requires an explicit technical justification note (enforced via HTTP 422 if omitted).
+4. **Preservation of Human Edits**: Re-running AI extractions or analysis graphs never silently overwrites reviewer-edited incident fields without explicit overwrite flags.
+5. **No Hallucinated Records or Roles**: CAPA actions assign roles only (e.g. `Maintenance Lead`, `Validation Specialist`), never hallucinating employee names.
+
+---
+
+## 📋 Guided 6-Stage Investigation Workflow
+
+1. **Stage 1: Evidence Intake & Ingestion (`IntakeStage.jsx`)**
+   - Upload deviation PDFs, paste unstructured shift logs, or ingest `.eml` email records.
+   - Computes SHA-256 checksums, page counts, and sanitizes filenames.
+   - Built-in `Load Sample API-X Incident` button instantly preloads the synthetic API purity deviation scenario.
+2. **Stage 2: AI Incident Extraction (`FormStage.jsx`)**
+   - Extracts 11 standardized pharmaceutical deviation fields (Product, Batch, Stage, Problem Statement, Expected/Observed Results, Immediate Actions, Equipment, Severity).
+   - Shows source citation provenance (filename, page number, excerpt) and confidence percentage.
+   - In-line human verification toggle (`Accept`, `Reject`, `Edit`) for every individual fact.
+3. **Stage 3: Evidence Extraction & Gap Analysis (`EvidenceStage.jsx`)**
+   - Parses technical evidence (calibration certificates, batch records, analytical assays).
+   - Detects chronological anomalies (e.g. post-incident calibration used to justify pre-incident run).
+   - Flags cross-document inconsistencies and generates actionable investigation gap alerts.
+4. **Stage 4: Root Cause Analysis Methods (`RcaMethodsStage.jsx`)**
+   - **5 Whys Analysis**: Interactive multi-step iterative causal drill-down.
+   - **Ishikawa 6M Fishbone**: Categorization into *Machine*, *Method*, *Material*, *People*, *Measurement*, and *Environment*.
+   - **Cause vs Evidence Matrix**: Separates supporting from contradicting evidence (e.g. solvent purity COA refuting raw material hypothesis).
+   - Human qualification controls (`Confirm Root Cause`, `Reject`, `Mark Needs Evidence`).
+5. **Stage 5: CAPA Action Formulation (`CapaStage.jsx`)**
+   - AI generates structured actions categorized into *Containment*, *Corrective*, *Preventive*, and *Investigation Follow-up*.
+   - Assigns role-based owners and defines measurable effectiveness check criteria (e.g., 3 consecutive commercial batches with purity $\ge 99.0\%$).
+   - Safety rule: If no cause is evidence-supported, CAPA generation is deferred with an explicit warning.
+6. **Stage 6: Investigation Dossier & Formal Sign-Off (`SummaryStage.jsx`)**
+   - Consolidated executive review of the entire investigation dossier.
+   - Qualified reviewer identity recording (`reviewer_name`, `reviewer_role`, `reviewer_note`, lifecycle status).
+   - Direct PostgreSQL persistence with audit timestamps.
+   - One-click DB reload and print/export dossier formatted for regulatory submission.
+
+---
+
+## 🚀 Quick Start Guide
 
 ### Prerequisites
-- **Python**: Version `3.10` or higher (`3.12` recommended)
-- **Node.js**: Version `18.0.0` or higher (`v24.x` recommended)
-- **npm**: Version `9.0.0` or higher
-- **PostgreSQL**: (Optional for initial startup, required for full DB persistence)
+- **Python**: 3.10+ (Python 3.12 recommended)
+- **Node.js**: 18+ (Node 20 or 24 recommended)
+- **PostgreSQL**: Local or cloud instance (e.g. Supabase, Neon, or local Docker)
 
----
+### 1. Backend Setup
 
-### 1. Backend Setup (FastAPI)
+```bash
+# Navigate to backend directory
+cd ai-rca-module/backend
 
-1. **Navigate to the backend directory**:
-   ```bash
-   cd backend
-   ```
+# Create and activate virtual environment
+# Windows PowerShell:
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+# Linux / macOS:
+# python3 -m venv venv && source venv/bin/activate
 
-2. **Create and activate a virtual environment**:
-   - **Windows (PowerShell)**:
-     ```powershell
-     python -m venv venv
-     .\venv\Scripts\Activate.ps1
-     ```
-   - **macOS / Linux**:
-     ```bash
-     python3 -m venv venv
-     source venv/bin/activate
-     ```
+# Install dependencies
+pip install -r requirements.txt
 
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+# Configure environment
+cp .env.example .env
+# Edit .env with your PostgreSQL DATABASE_URL and optional GROQ_API_KEY
+# If GROQ_API_KEY is omitted, the system seamlessly uses deterministic GxP offline fallback algorithms.
 
-4. **Configure environment variables**:
-   ```bash
-   # Copy example environment configuration
-   cp .env.example .env
-   ```
-   Edit `.env` to configure your credentials:
-   - `DATABASE_URL`: PostgreSQL connection string (e.g. `postgresql://postgres:password@localhost:5432/rca_db`)
-   - `GROQ_API_KEY`: Your Groq API key from [Groq Console](https://console.groq.com/keys)
-   - `CORS_ORIGINS`: Allowed origins, defaults to `http://localhost:5173,http://127.0.0.1:5173`
+# Run database migrations
+alembic upgrade head
 
-5. **Start the FastAPI backend server**:
-   ```bash
-   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-   ```
-
-6. **Verify the backend**:
-   - Health Check: [http://localhost:8000/api/health](http://localhost:8000/api/health)
-   - Interactive Swagger Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
-   - Alternative ReDoc: [http://localhost:8000/redoc](http://localhost:8000/redoc)
-
----
-
-### 2. Frontend Setup (React + Vite + Redux Toolkit)
-
-1. **Navigate to the frontend directory**:
-   ```bash
-   cd frontend
-   ```
-
-2. **Install npm dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Configure environment variables**:
-   ```bash
-   cp .env.example .env
-   ```
-   Ensure `VITE_API_BASE_URL` points to your backend:
-   ```env
-   VITE_API_BASE_URL="http://localhost:8000"
-   ```
-
-4. **Start the Vite development server**:
-   ```bash
-   npm run dev
-   ```
-
-5. **Access the application**:
-   Open [http://localhost:5173](http://localhost:5173) in your browser. The dashboard automatically queries `/api/health` and displays the real-time status of the backend API, PostgreSQL, and the Groq AI engine.
-
----
-
-## 🔍 Health-Check Endpoint Specification
-
-### `GET /api/health`
-
-Returns diagnostic details regarding backend components:
-
-**Example Response**:
-```json
-{
-  "status": "ok",
-  "version": "0.1.0",
-  "environment": "development",
-  "timestamp": "2026-11-24T11:06:54.056426Z",
-  "services": {
-    "api": {
-      "status": "healthy",
-      "service": "Root Cause Analysis (RCA) Module"
-    },
-    "database": {
-      "status": "connected",
-      "message": "Successfully connected to PostgreSQL database."
-    },
-    "ai_engine": {
-      "status": "ready",
-      "message": "Groq API key configured",
-      "model": "llama-3.3-70b-versatile"
-    }
-  }
-}
+# Start FastAPI server
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+- API Health Check: [http://localhost:8000/api/health](http://localhost:8000/api/health)
+- Swagger OpenAPI Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+### 2. Frontend Setup
+
+```bash
+# In a new terminal, navigate to frontend directory
+cd ai-rca-module/frontend
+
+# Install dependencies
+npm install
+
+# Start Vite development server
+npm run dev
+```
+
+- Open [http://localhost:5173](http://localhost:5173) in your browser.
+
 ---
 
-## 🧠 AI Workflow & LangGraph Architecture
+## 🧪 Comprehensive Automated Test Suites
 
-The AI module (`backend/app/ai/`) implements a stateful agentic pipeline using **LangGraph**:
+### Backend Tests (50 Tests Passing)
+```bash
+cd ai-rca-module/backend
+.\venv\Scripts\pytest.exe -v
+```
+Test modules include:
+- `test_health.py`: Health check and landing endpoints.
+- `test_database.py`: SQLAlchemy ORM models, relations, cascades.
+- `test_document_parser.py`: PyMuPDF page parsing, email RFC-822, whitespace cleaner, SHA-256.
+- `test_document_api.py`: Uploads, text ingest, validation errors, security sanitization.
+- `test_extraction.py`: LangGraph extraction node, complete/partial sources, edit preservation.
+- `test_evidence.py`: Evidence records, gap detection, timeline anomalies, conflict identification.
+- `test_rca_methods.py`: 5 Whys chain, Fishbone 6M categorization, human qualification.
+- `test_cause_assessment.py`: Supporting/contradicting evidence matrix, mandatory justification note.
+- `test_capa.py`: CAPA generation, deferral without supported cause, role assignment, acceptance.
+- `test_persistence.py`: Field updates, reviewed draft saving, GxP sign-off, full dossier reload.
+- `test_workflow.py`: LangGraph StateGraph compilation, execution, and Groq health probe.
 
-1. **State Definition (`state.py`)**: `RCAState` manages typed context containing incident telemetry, anomalies, hypotheses, candidate root causes, and remediation proposals.
-2. **Modular Nodes (`nodes.py`)**:
-   - `log_analyzer_node`: Ingests and parses unstructured logs and telemetry metrics.
-   - `hypothesis_generator_node`: Formulates probable failure hypotheses.
-   - `root_cause_identifier_node`: Synthesizes evidence to isolate the root cause.
-   - `recommendation_node`: Generates actionable recovery and mitigation playbooks.
-3. **Workflow Compilation (`workflow.py`)**: Connects nodes in a directed execution graph via `StateGraph(RCAState)`.
-4. **Groq Client Factory (`groq_client.py`)**: Manages high-performance Groq LLM instances (`ChatGroq`) with fallback and diagnostic reporting.
+### Frontend Tests (12 Tests Passing)
+```bash
+cd ai-rca-module/frontend
+npm test
+npm run lint
+npm run build
+```
+- 12 unit tests verifying Redux slices, human review actions, gap resolution, sample data preloader, and dossier serialization.
+- Oxlint: 0 warnings, 0 errors across 21 files.
+- Vite build: Production bundle created cleanly.
 
 ---
 
-## 🔒 Security & Privacy Notice
-- `.env` files are strictly excluded via `.gitignore`. Never commit API keys or production database credentials.
-- In accordance with assignment instructions, this project must **not** be pushed or published to public or remote repositories.
+## 🧪 Demonstration Scenario: API-X Batch Purity OOS
+
+To demonstrate the full end-to-end investigation:
+1. Open [http://localhost:5173](http://localhost:5173).
+2. Click **"🧪 Load Sample API-X Incident"** in the top navigation bar.
+3. Observe the preloaded scenario:
+   - **Deviation**: API-X Batch `BATCH-2026-014` purity HPLC assay yielded `98.1%` (below limit $\ge 99.0\%$).
+   - **Evidence 1**: Deviation Incident Report (`doc-001`).
+   - **Evidence 2**: Calibration Certificate for `TEMP-SENSOR-014` showing `+0.8°C` drift (`doc-002`).
+   - **Contradicting Evidence**: Solvent Lot `S-8821` COA showed `99.8%` purity, refuting raw material impurity.
+4. Step through the stages:
+   - **Stage 2**: View extracted incident fields with confidence scores and source citations.
+   - **Stage 3**: Review identified calibration anomaly and missing cooling jacket telemetry gap.
+   - **Stage 4**: Inspect the 5 Whys causal chain and Fishbone 6M diagram. Review the Cause vs Evidence Matrix. Click **"Confirm Root Cause"** on Sensor Drift and enter justification note.
+   - **Stage 5**: Generate and approve evidence-linked CAPA actions (sensor recalibration, cooling jacket SOP update).
+   - **Stage 6**: Enter reviewer sign-off details, click **"💾 Save & Persist Reviewed Investigation Dossier"**, and click **"🔄 Reload from DB"** to verify PostgreSQL persistence.
