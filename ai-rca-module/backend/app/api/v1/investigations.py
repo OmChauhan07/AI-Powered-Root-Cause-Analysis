@@ -148,10 +148,30 @@ async def run_incident_extraction(
     inv.batch_number = update_field_if_eligible(inv.batch_number, incident_data.get("batch_number"))
     inv.manufacturing_stage = update_field_if_eligible(inv.manufacturing_stage, incident_data.get("manufacturing_stage"))
     inv.problem_statement = update_field_if_eligible(inv.problem_statement, incident_data.get("problem_statement"))
+    inv.expected_result = update_field_if_eligible(inv.expected_result, incident_data.get("expected_result"))
+    inv.observed_result = update_field_if_eligible(inv.observed_result, incident_data.get("observed_result"))
     inv.immediate_action = update_field_if_eligible(inv.immediate_action, incident_data.get("immediate_action"))
     inv.equipment_id = update_field_if_eligible(inv.equipment_id, incident_data.get("equipment_id"))
     if incident_data.get("severity"):
         inv.severity = incident_data.get("severity")
+
+    raw_date = incident_data.get("incident_date")
+    if raw_date and (overwrite or not inv.incident_at):
+        dt_val = None
+        clean_d = str(raw_date).replace(" UTC", "").replace("Z", "").strip()
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
+            try:
+                dt_val = datetime.strptime(clean_d, fmt).replace(tzinfo=timezone.utc)
+                break
+            except Exception:
+                pass
+        if not dt_val:
+            import re
+            m = re.search(r'(\d{4})-(\d{2})-(\d{2})', clean_d)
+            if m:
+                dt_val = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=timezone.utc)
+        if dt_val:
+            inv.incident_at = dt_val
 
     db.commit()
     db.refresh(inv)

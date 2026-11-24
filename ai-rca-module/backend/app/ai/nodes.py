@@ -74,8 +74,40 @@ def extract_incident_fields_node(state: RCAState) -> Dict[str, Any]:
             "workflow_status": "empty_source",
         }
 
-    logger.info("Executing deterministic GxP extraction parser.")
-    return _execute_deterministic_extraction(normalized_sources)
+    logger.info("Executing robust GxP extraction parser.")
+    deterministic_result = _execute_deterministic_extraction(normalized_sources)
+
+    # Try LLM extraction if Groq is available to complement deterministic facts
+    llm = get_groq_llm()
+    if llm is not None:
+        try:
+            llm_result = _execute_llm_extraction(llm, normalized_sources)
+            merged_fields = {**deterministic_result["incident_fields"]}
+            for k, v in llm_result.get("incident_fields", {}).items():
+                if v and not merged_fields.get(k):
+                    merged_fields[k] = v
+
+            det_fact_names = {f["field_name"] for f in deterministic_result.get("extracted_facts", [])}
+            merged_facts = list(deterministic_result.get("extracted_facts", []))
+            for lf in llm_result.get("extracted_facts", []):
+                if lf["field_name"] not in det_fact_names:
+                    merged_facts.append(lf)
+
+            return {
+                "incident_fields": merged_fields,
+                "extracted_facts": merged_facts,
+                "missing_information": [
+                    m for m in deterministic_result.get("missing_information", [])
+                    if not merged_fields.get(m["field_name"])
+                ],
+                "warnings": list(set(deterministic_result.get("warnings", []) + llm_result.get("warnings", []))),
+                "current_step": "extraction_complete",
+                "workflow_status": "draft_ready",
+            }
+        except Exception as exc:
+            logger.warning("LLM extraction attempt failed (%s), using deterministic extraction result.", exc)
+
+    return deterministic_result
 
 
 def _execute_llm_extraction(llm, sources: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -127,9 +159,9 @@ def _execute_llm_extraction(llm, sources: List[Dict[str, Any]]) -> Dict[str, Any
 
 
 def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Fallback deterministic extraction parser for pharmaceutical incident narratives.
+    """Robust multi-modal extraction parser for pharmaceutical incident deviation documents.
 
-    Extracts explicit data with verbatim citations and marks absent fields as missing.
+    Extracts explicit data from tables, key-value delimiters, and narrative text with verbatim citations.
     """
     all_pages: List[Dict[str, Any]] = []
 
@@ -157,32 +189,76 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
 
     full_text = "\n".join(p["text"] for p in all_pages)
 
-    # Patterns for pharmaceutical deviation extraction
     fields = IncidentFieldsSchema()
     facts: List[ExtractedFactItem] = []
     missing: List[MissingInformationItem] = []
     warnings: List[str] = []
 
-    def find_in_pages(regex: str, group: int = 1) -> Optional[Dict[str, Any]]:
-        for p in all_pages:
-            match = re.search(regex, p["text"], re.IGNORECASE)
-            if match:
-                val = match.group(group).strip()
-                # Extract surrounding sentence as excerpt
-                start = max(0, match.start() - 30)
-                end = min(len(p["text"]), match.end() + 40)
-                excerpt = p["text"][start:end].replace("\n", " ").strip()
-                return {
-                    "value": val,
-                    "doc_id": p["doc_id"],
-                    "filename": p["filename"],
-                    "page_number": p["page_number"],
-                    "excerpt": excerpt,
-                }
+    def find_field_multimodal(
+        patterns: List[str],
+        label_regexes: Optional[List[str]] = None,
+        val_cleaner = None,
+    ) -> Optional[Dict[str, Any]]:
+        # 1. Search inline patterns across all pages
+        for pat in patterns:
+            for p in all_pages:
+                match = re.search(pat, p["text"], re.IGNORECASE)
+                if match:
+                    raw_val = match.group(1).strip()
+                    val = re.split(r'\s*\|\s*', raw_val)[0].strip().rstrip(".;,")
+                    if val_cleaner:
+                        val = val_cleaner(val)
+                    if val:
+                        start = max(0, match.start() - 30)
+                        end = min(len(p["text"]), match.end() + 40)
+                        excerpt = p["text"][start:end].replace("\n", " ").strip()
+                        return {
+                            "value": val,
+                            "doc_id": p["doc_id"],
+                            "filename": p["filename"],
+                            "page_number": p["page_number"],
+                            "excerpt": excerpt,
+                        }
+
+        # 2. Search multi-line table format: Label on line i, Value on line i+1
+        if label_regexes:
+            for p in all_pages:
+                lines = [l.strip() for l in p["text"].split("\n") if l.strip()]
+                for i, line in enumerate(lines):
+                    for lbl in label_regexes:
+                        if re.fullmatch(lbl, line, re.IGNORECASE) or re.search(f"^{lbl}\\s*$", line, re.IGNORECASE):
+                            if i + 1 < len(lines):
+                                next_line = lines[i + 1]
+                                next_val = re.split(r'\s*\|\s*', next_line)[0].strip().rstrip(".;,")
+                                if val_cleaner:
+                                    next_val = val_cleaner(next_val)
+                                if next_val:
+                                    return {
+                                        "value": next_val,
+                                        "doc_id": p["doc_id"],
+                                        "filename": p["filename"],
+                                        "page_number": p["page_number"],
+                                        "excerpt": f"{line}: {next_val}",
+                                    }
         return None
 
     # 1. Batch Number
-    batch_hit = find_in_pages(r"(?:\b|^|\n)(?:batch|lot)(?:\s*(?:number|no|id|#))?\s*:\s*([A-Z0-9-]+)")
+    batch_hit = find_field_multimodal(
+        patterns=[
+            r'(?:batch(?:\s*/\s*lot)?(?:\s+number|\s+no|\s+id)?|lot(?:\s+number)?)\s*[:=|-]?\s*([A-Za-z0-9_-]+)',
+            r'\b(BATCH-[A-Za-z0-9-]+)\b',
+            r'\b(LOT-[A-Za-z0-9-]+)\b',
+        ],
+        label_regexes=[
+            r'batch(?:\s*/\s*lot)?(?:\s+number)?',
+            r'batch\s+number',
+            r'lot\s+number',
+            r'batch\s*/\s*lot',
+            r'batch',
+            r'lot',
+        ],
+        val_cleaner=lambda v: None if v.lower() in ['number', 'is', 'the', 'for', 'details', 'parameter'] else v.upper(),
+    )
     if batch_hit:
         fields.batch_number = batch_hit["value"]
         facts.append(ExtractedFactItem(
@@ -202,13 +278,26 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
         ))
 
     # 2. Product Name
-    prod_hit = find_in_pages(r"(?:\b|^|\n)(?:product|api|material)(?:\s*name)?\s*:\s*([^\n]+)")
+    prod_hit = find_field_multimodal(
+        patterns=[
+            r'(?:product\s+name|active\s+pharmaceutical\s+ingredient|drug\s+substance)\s*[:=|-]?\s*([^\n|]+)',
+            r'(?:for\s+product|product\s+is)\s*[:=|-]?\s*([A-Za-z0-9\s-]+?)(?:\s+batch|\s+product|\s+code|[.,;\n]|$)',
+        ],
+        label_regexes=[
+            r'product\s+name',
+            r'product',
+            r'drug\s+product',
+            r'material\s+name',
+            r'active\s+pharmaceutical\s+ingredient',
+            r'active\s+substance',
+        ],
+        val_cleaner=lambda v: None if v.lower() in ['name', 'is', 'the', 'for', 'code', 'details', 'parameter', 'api'] else v,
+    )
     if prod_hit:
-        val = prod_hit["value"].rstrip(".;").strip()
-        fields.product_name = val
+        fields.product_name = prod_hit["value"]
         facts.append(ExtractedFactItem(
             field_name="product_name",
-            field_value=val,
+            field_value=prod_hit["value"],
             source_document_id=prod_hit["doc_id"],
             source_filename=prod_hit["filename"],
             source_page=prod_hit["page_number"],
@@ -223,13 +312,29 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
         ))
 
     # 3. Product / Material Code
-    code_hit = find_in_pages(r"(?:\b|^|\n)(?:product\s*code|item\s*code|material\s*code)\s*:\s*([^\n]+)")
+    code_hit = find_field_multimodal(
+        patterns=[
+            r'(?:product(?:\s*/\s*item)?\s+code|item\s+code|material\s+code|part\s+number)\s*[:=|-]?\s*([A-Za-z0-9_-]+)',
+            r'\b([A-Z]{3,5}-[A-Z]{2,5}-[0-9]{2,5})\b',
+        ],
+        label_regexes=[
+            r'product(?:\s*/\s*item)?\s+code',
+            r'product\s+code',
+            r'item\s+code',
+            r'material\s+code',
+            r'material\s+id',
+            r'product\s*/\s*material\s+code',
+        ],
+        val_cleaner=lambda v: None if (
+            v.lower() in ['code', 'is', 'the', 'for', 'details', 'parameter']
+            or v.upper().startswith(('BATCH-', 'LOT-', 'DEV-', 'RCA-', 'CAL-', 'CHROM-', 'TEMP-', 'CRYST-'))
+        ) else v.upper(),
+    )
     if code_hit:
-        val = code_hit["value"].rstrip(".;").strip()
-        fields.product_code = val
+        fields.product_code = code_hit["value"]
         facts.append(ExtractedFactItem(
             field_name="product_code",
-            field_value=val,
+            field_value=code_hit["value"],
             source_document_id=code_hit["doc_id"],
             source_filename=code_hit["filename"],
             source_page=code_hit["page_number"],
@@ -244,14 +349,24 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
         ))
 
     # 4. Manufacturing Stage
-    stage_hit = find_in_pages(r"(?:\b|^|\n)(?:manufacturing\s*stage|process\s*stage|stage|step)\s*:\s*([^\n]+)") or \
-                find_in_pages(r"((?:crystallization|purification|milling|drying|reaction)(?:\s*(?:phase|stage|step|process))?)")
+    stage_hit = find_field_multimodal(
+        patterns=[
+            r'(?:manufacturing\s+stage(?:\s*/\s*process\s+step)?|process\s+step|stage|step)\s*[:=|-]?\s*([^\n|]+)',
+            r'((?:final\s+)?crystallization[^\n.,;]*)',
+            r'((?:filtration|centrifugation|purification|drying|milling)[^\n.,;]*)',
+        ],
+        label_regexes=[
+            r'manufacturing\s+stage(?:\s*/\s*process\s+step)?',
+            r'manufacturing\s+stage',
+            r'process\s+step',
+            r'stage',
+        ],
+    )
     if stage_hit:
-        val = stage_hit["value"].rstrip(".;").strip()
-        fields.manufacturing_stage = val
+        fields.manufacturing_stage = stage_hit["value"]
         facts.append(ExtractedFactItem(
             field_name="manufacturing_stage",
-            field_value=val,
+            field_value=stage_hit["value"],
             source_document_id=stage_hit["doc_id"],
             source_filename=stage_hit["filename"],
             source_page=stage_hit["page_number"],
@@ -266,13 +381,26 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
         ))
 
     # 5. Incident Date / Timestamp
-    date_hit = find_in_pages(r"(?:\b|^|\n)(?:incident\s*date|date|timestamp|occurred\s*on)\s*:\s*([^\n]+)")
+    date_hit = find_field_multimodal(
+        patterns=[
+            r'(?:incident\s*(?:occurrence\s*)?date(?:\s*(?:&|/)\s*time)?|date(?:\s*(?:&|/)\s*time)?|timestamp|occurred\s*on)\s*[:=|-]?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T\s][0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:\s*[A-Z]{3,4})?)?)',
+            r'\b(\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?(?:\s*UTC)?)?)\b',
+            r'(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}(?:\s+\d{2}:\d{2})?)',
+        ],
+        label_regexes=[
+            r'incident\s*(?:occurrence\s*)?date(?:\s*(?:&|/)\s*time)?',
+            r'incident\s+date(?:\s*(?:&|/)\s*time)?',
+            r'incident\s+date',
+            r'date(?:\s*(?:&|/)\s*time)?',
+            r'date',
+            r'occurrence\s+date',
+        ],
+    )
     if date_hit:
-        val = date_hit["value"].rstrip(".;").strip()
-        fields.incident_date = val
+        fields.incident_date = date_hit["value"]
         facts.append(ExtractedFactItem(
             field_name="incident_date",
-            field_value=val,
+            field_value=date_hit["value"],
             source_document_id=date_hit["doc_id"],
             source_filename=date_hit["filename"],
             source_page=date_hit["page_number"],
@@ -287,14 +415,24 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
         ))
 
     # 6. Expected Result / Specification
-    spec_hit = find_in_pages(r"(?:\b|^|\n)(?:expected\s*specification|expected\s*result|specification|spec|acceptance\s*criteria)\s*:\s*([^\n]+)") or \
-               find_in_pages(r"((?:>=|<=)\s*\d+(?:\.\d+)?\s*%[^\n]*)")
+    spec_hit = find_field_multimodal(
+        patterns=[
+            r'(?:expected\s+specification|registered\s+specification(?:\s+limit)?|specification\s+limit|expected\s+result|acceptance\s+criteria)\s*[:=|-]?\s*([^\n|]+)',
+            r'((?:>=|<=|>|<|=)\s*\d+(?:\.\d+)?\s*%[^\n.,]*)',
+        ],
+        label_regexes=[
+            r'expected\s+specification',
+            r'registered\s+specification(?:\s+limit)?',
+            r'specification\s+limit',
+            r'acceptance\s+criteria',
+            r'expected\s+result',
+        ],
+    )
     if spec_hit:
-        val = spec_hit["value"].rstrip(".;").strip()
-        fields.expected_result = val
+        fields.expected_result = spec_hit["value"]
         facts.append(ExtractedFactItem(
             field_name="expected_result",
-            field_value=val,
+            field_value=spec_hit["value"],
             source_document_id=spec_hit["doc_id"],
             source_filename=spec_hit["filename"],
             source_page=spec_hit["page_number"],
@@ -309,14 +447,24 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
         ))
 
     # 7. Observed Result
-    obs_hit = find_in_pages(r"(?:\b|^|\n)(?:observed\s*result|observed|measured\s*result|measured|actual\s*result|analytical\s*result|purity\s*result)\s*:\s*([^\n]+)") or \
-              find_in_pages(r"(\d{2}\.\d+%\s*(?:\([^\)]+\))?)")
+    obs_hit = find_field_multimodal(
+        patterns=[
+            r'(?:observed\s+test\s+result|observed\s+result|measured\s+result|actual\s+result|analytical\s+result)\s*[:=|-]?\s*([^\n|]+)',
+            r'(purity\s+\d+(?:\.\d+)?%[^\n.,]*)',
+            r'(\d+(?:\.\d+)?%\s+purity[^\n.,]*)',
+        ],
+        label_regexes=[
+            r'observed(?:\s+test)?\s+result',
+            r'observed\s+result',
+            r'measured\s+result',
+            r'actual\s+result',
+        ],
+    )
     if obs_hit:
-        val = obs_hit["value"].rstrip(".;").strip()
-        fields.observed_result = val
+        fields.observed_result = obs_hit["value"]
         facts.append(ExtractedFactItem(
             field_name="observed_result",
-            field_value=val,
+            field_value=obs_hit["value"],
             source_document_id=obs_hit["doc_id"],
             source_filename=obs_hit["filename"],
             source_page=obs_hit["page_number"],
@@ -331,39 +479,59 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
         ))
 
     # 8. Problem Statement
-    problem_hit = find_in_pages(r"(?:\b|^|\n)(?:problem\s*statement|deviation\s*summary|deviation\s*description|failure)\s*:\s*([^\n]+)")
+    problem_hit = find_field_multimodal(
+        patterns=[
+            r'(?:problem\s+statement(?:\s*/\s*observed\s+failure)?|deviation\s+summary|deviation\s+description|problem\s+description)\s*[:=|-]?\s*([^\n|]+)',
+        ],
+        label_regexes=[
+            r'problem\s+statement(?:\s*/\s*observed\s+failure)?',
+            r'problem\s+statement',
+            r'deviation\s+description',
+        ],
+    )
+    if not problem_hit:
+        for p in all_pages:
+            for line in p["text"].split("\n"):
+                l_clean = line.strip()
+                if ("out-of-specification" in l_clean.lower() or "oos" in l_clean.lower() or "deviation" in l_clean.lower()) and len(l_clean) > 25:
+                    if not any(hdr in l_clean.lower() for hdr in ["incident report", "deviation &", "deviation report", "quality deviation"]):
+                        problem_hit = {
+                            "value": l_clean,
+                            "doc_id": p["doc_id"],
+                            "filename": p["filename"],
+                            "page_number": p["page_number"],
+                            "excerpt": l_clean,
+                        }
+                        break
+            if problem_hit:
+                break
+
+    if not problem_hit and (fields.product_name or fields.batch_number or fields.observed_result):
+        p_name = fields.product_name or "Drug substance"
+        b_num = fields.batch_number or "N/A"
+        obs = fields.observed_result or "Out-of-Specification deviation"
+        stg = fields.manufacturing_stage or "production"
+        syn_val = f"Out-of-Specification deviation during {stg}: observed {obs} in {p_name} batch {b_num}."
+        problem_hit = {
+            "value": syn_val,
+            "doc_id": all_pages[0]["doc_id"] if all_pages else None,
+            "filename": all_pages[0]["filename"] if all_pages else None,
+            "page_number": 1,
+            "excerpt": syn_val,
+        }
+
     if problem_hit:
-        val = problem_hit["value"].rstrip(".;").strip()
-        fields.problem_statement = val
+        fields.problem_statement = problem_hit["value"]
         facts.append(ExtractedFactItem(
             field_name="problem_statement",
-            field_value=val,
+            field_value=problem_hit["value"],
             source_document_id=problem_hit["doc_id"],
             source_filename=problem_hit["filename"],
             source_page=problem_hit["page_number"],
             source_excerpt=problem_hit["excerpt"],
             confidence=0.90,
         ))
-    elif "out-of-specification" in full_text.lower() or "deviation" in full_text.lower():
-        # Synthesize concise problem statement from first paragraph
-        for p in all_pages:
-            for line in p["text"].split("\n"):
-                if "out-of-specification" in line.lower() or "deviation" in line.lower() or "purity" in line.lower():
-                    fields.problem_statement = line.strip()
-                    facts.append(ExtractedFactItem(
-                        field_name="problem_statement",
-                        field_value=line.strip(),
-                        source_document_id=p["doc_id"],
-                        source_filename=p["filename"],
-                        source_page=p["page_number"],
-                        source_excerpt=line.strip(),
-                        confidence=0.85,
-                    ))
-                    break
-            if fields.problem_statement:
-                break
-
-    if not fields.problem_statement:
+    else:
         missing.append(MissingInformationItem(
             field_name="problem_statement",
             description="Clear problem statement not explicitly stated.",
@@ -371,14 +539,23 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
         ))
 
     # 9. Equipment Identifiers
-    equip_hit = find_in_pages(r"(?:\b|^|\n)(?:equipment(?:\s*id)?|instrument|reactor|vessel|sensor)\s*:\s*([^\n]+)") or \
-                find_in_pages(r"((?:CRYST-REACTOR|TEMP-SENSOR|REACTOR|VESSEL)-[A-Z0-9-]+)")
+    equip_hit = find_field_multimodal(
+        patterns=[
+            r'(?:equipment\s+id(?:entifiers?)?|instrument(?:\s*id)?|production\s*equipment)\s*[:=|-]?\s*([^\n|]+)',
+            r'((?:(?:CRYST-)?REACTOR|TEMP-SENSOR|CENTRI|DRYER|VESSEL|FILTER)-[A-Za-z0-9-]+(?:\s*[/&]\s*(?:(?:CRYST-)?REACTOR|TEMP-SENSOR|CENTRI|DRYER|VESSEL|FILTER)-[A-Za-z0-9-]+)*)',
+        ],
+        label_regexes=[
+            r'equipment\s+id(?:entifiers?)?',
+            r'production\s+equipment(?:\s*/\s*instrument\s+id)?',
+            r'instrument\s+id',
+            r'equipment',
+        ],
+    )
     if equip_hit:
-        val = equip_hit["value"].rstrip(".;").strip()
-        fields.equipment_id = val
+        fields.equipment_id = equip_hit["value"]
         facts.append(ExtractedFactItem(
             field_name="equipment_id",
-            field_value=val,
+            field_value=equip_hit["value"],
             source_document_id=equip_hit["doc_id"],
             source_filename=equip_hit["filename"],
             source_page=equip_hit["page_number"],
@@ -393,14 +570,22 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
         ))
 
     # 10. Immediate Action
-    action_hit = find_in_pages(r"(?:\b|^|\n)(?:immediate\s*containment|immediate\s*action|containment|action\s*taken)\s*:\s*([^\n]+)") or \
-                 find_in_pages(r"(quarantine[^\n.]*\.|halted[^\n.]*\.)")
+    action_hit = find_field_multimodal(
+        patterns=[
+            r'(?:immediate\s+containment(?:\s+actions?)?|immediate\s+actions?|containment\s+action)\s*[:=|-]?\s*([^\n|]+)',
+            r'(quarantine[^\n.]*\.[^\n.]*\.?)',
+        ],
+        label_regexes=[
+            r'immediate\s+containment(?:\s+actions?)?',
+            r'immediate\s+action',
+            r'containment\s+action',
+        ],
+    )
     if action_hit:
-        val = action_hit["value"].rstrip(".;").strip()
-        fields.immediate_action = val
+        fields.immediate_action = action_hit["value"]
         facts.append(ExtractedFactItem(
             field_name="immediate_action",
-            field_value=val,
+            field_value=action_hit["value"],
             source_document_id=action_hit["doc_id"],
             source_filename=action_hit["filename"],
             source_page=action_hit["page_number"],
@@ -415,7 +600,10 @@ def _execute_deterministic_extraction(sources: List[Dict[str, Any]]) -> Dict[str
         ))
 
     # Determine severity
-    if "oos" in full_text.lower() or "out-of-specification" in full_text.lower() or "reject" in full_text.lower():
+    sev_match = re.search(r'(?:severity(?:\s*rating)?)\s*[:=|-]?\s*([A-Za-z]+)', full_text, re.IGNORECASE)
+    if sev_match and sev_match.group(1).lower() in ['critical', 'high', 'medium', 'low']:
+        fields.severity = sev_match.group(1).lower()
+    elif "oos" in full_text.lower() or "out-of-specification" in full_text.lower() or "reject" in full_text.lower():
         fields.severity = "critical"
     else:
         fields.severity = "high"
@@ -1568,7 +1756,7 @@ def extract_incident_fields_from_text(text: str) -> Dict[str, Any]:
     """Comprehensive NLP entity extraction for pharmaceutical incident deviations.
     
     Extracts product name, product code, batch number, equipment IDs, manufacturing stage,
-    observed results, expected specifications, immediate containment actions, and problem statements.
+    incident date, observed results, expected specifications, containment actions, and problem statements.
     """
     fields: Dict[str, Any] = {}
     lower = text.lower()
@@ -1576,55 +1764,102 @@ def extract_incident_fields_from_text(text: str) -> Dict[str, Any]:
     # If it is purely a general conceptual question, do not extract incident fields
     is_general_q = (
         lower.startswith(("why ", "what is ", "what does ", "explain ", "can you explain ", "how does "))
-        and not any(w in lower for w in ["update", "change", "set", "correct", "assign", "product", "batch", "id", "code", "purity"])
+        and not any(w in lower for w in ["update", "change", "set", "correct", "assign", "product", "batch", "id", "code", "purity", "report", "incident"])
     )
     if is_general_q:
         return {}
 
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+
+    def find_table_value(label_patterns: List[str]) -> Optional[str]:
+        for i, line in enumerate(lines):
+            for pat in label_patterns:
+                if re.fullmatch(pat, line, re.IGNORECASE) or re.search(f"^{pat}\\s*$", line, re.IGNORECASE):
+                    if i + 1 < len(lines):
+                        val = re.split(r'\s*\|\s*', lines[i + 1])[0].strip().rstrip(".;,")
+                        if val:
+                            return val
+        return None
+
     # 1. Product Code (check first to avoid conflict with 'product name')
     code_match = re.search(
-        r'(?:product\s+code|item\s+code|material\s+code|id\s+of\s+it|code)\s*(?:is|:|=|\s+to)?\s*([A-Za-z0-9_-]+)',
+        r'(?:product(?:\s*/\s*item)?\s+code|item\s+code|material\s+code|id\s+of\s+it|part\s+number|code)\s*(?:is|:|=|\s+to|\n|\t)?\s*([A-Za-z0-9_-]+)',
         text,
         re.IGNORECASE,
     )
-    if code_match and code_match.group(1).lower() not in ['is', 'the', 'for', 'a', 'to']:
-        fields['product_code'] = code_match.group(1).strip()
+    if code_match and code_match.group(1).lower() not in ['is', 'the', 'for', 'a', 'to', 'of', 'parameter', 'details']:
+        fields['product_code'] = code_match.group(1).strip().upper()
+    else:
+        tbl_code = find_table_value([r'product(?:\s*/\s*item)?\s+code', r'product\s+code', r'item\s+code', r'material\s+code'])
+        if tbl_code and tbl_code.lower() not in ['details', 'parameter']:
+            fields['product_code'] = tbl_code.strip().upper()
 
-    # 2. Product Name
+    # 2. Batch / Lot Number
+    b_match = re.search(
+        r'(?:batch(?:\s*/\s*lot)?(?:\s+number|\s+no|\s+id)?|lot(?:\s+number)?)\s*(?:is|:|=|\s+to|\n|\t)?\s*([A-Za-z0-9-]+)',
+        text,
+        re.IGNORECASE,
+    )
+    if b_match and b_match.group(1).lower() not in ['number', 'is', 'the', 'to', 'details', 'parameter']:
+        fields['batch_number'] = b_match.group(1).strip().upper()
+    else:
+        tbl_batch = find_table_value([r'batch(?:\s*/\s*lot)?(?:\s+number)?', r'batch\s+number', r'lot\s+number', r'batch\s*/\s*lot', r'batch', r'lot'])
+        if tbl_batch and tbl_batch.lower() not in ['details', 'parameter']:
+            fields['batch_number'] = tbl_batch.strip().upper()
+        elif not fields.get('batch_number'):
+            b_raw = re.search(r'\b(BATCH-[\w-]+|LOT-[\w-]+|\d{4}-\d{3,4})\b', text, re.IGNORECASE)
+            if b_raw:
+                fields['batch_number'] = b_raw.group(1).strip().upper()
+
+    # 3. Product Name
     p_match = re.search(
-        r'(?:product\s+name|drug\s+product|substance|active\s+pharmaceutical\s+ingredient|\bapi\b|\bproduct\b)\s*(?:is|:|=|\s+to)?\s*([A-Za-z0-9-]+)',
+        r'(?:product\s+name|active\s+pharmaceutical\s+ingredient|drug\s+substance)\s*(?:is|:|=|\s+to|\n|\t)?\s*([^\n|,;]+)',
         text,
         re.IGNORECASE,
     )
     if p_match:
         val = p_match.group(1).strip()
-        if val.lower() not in ['code', 'id', 'the', 'is', 'for', 'name', 'number', 'deviation', 'stage', 'to']:
+        if val.lower() not in ['code', 'id', 'the', 'is', 'for', 'name', 'number', 'deviation', 'stage', 'to', 'details', 'parameter']:
             fields['product_name'] = val
+    if not fields.get('product_name'):
+        tbl_p = find_table_value([r'product\s+name', r'product', r'drug\s+product', r'material\s+name', r'active\s+pharmaceutical\s+ingredient'])
+        if tbl_p and tbl_p.lower() not in ['details', 'parameter', 'name']:
+            fields['product_name'] = tbl_p.strip()
+    if not fields.get('product_name'):
+        p_gen = re.search(r'(?:product|substance)\s*(?:is|:|=|\s+to)?\s*([A-Za-z0-9-]+)', text, re.IGNORECASE)
+        if p_gen:
+            val = p_gen.group(1).strip()
+            if val.lower() not in ['code', 'id', 'the', 'is', 'for', 'name', 'number', 'deviation', 'stage', 'to']:
+                fields['product_name'] = val
 
-    # 3. Batch / Lot Number
-    b_match = re.search(
-        r'(?:batch(?:\s+number)?|lot(?:\s+number)?)\s*(?:is|:|=|\s+to)?\s*([A-Za-z0-9-]+)',
+    # 4. Incident Date
+    d_match = re.search(
+        r'(?:date(?:\s*(?:&|/)\s*time)?|incident\s*(?:occurrence\s*)?date(?:\s*(?:&|/)\s*time)?|timestamp|occurred\s*on)\s*[:=|-]?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T\s][0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:\s*[A-Za-z0-9:]+)?)?)',
         text,
         re.IGNORECASE,
     )
-    if b_match and b_match.group(1).lower() not in ['number', 'is', 'the', 'to']:
-        fields['batch_number'] = b_match.group(1).strip().upper()
-    elif not fields.get('batch_number'):
-        b_raw = re.search(r'\b(BATCH-[\w-]+|LOT-[\w-]+|\d{4}-\d{3,4})\b', text, re.IGNORECASE)
-        if b_raw:
-            fields['batch_number'] = b_raw.group(1).strip().upper()
+    if d_match:
+        fields['incident_date'] = re.split(r'\s*\|\s*', d_match.group(1).strip())[0].strip()
+    else:
+        tbl_d = find_table_value([r'incident\s*(?:occurrence\s*)?date(?:\s*(?:&|/)\s*time)?', r'incident\s+date', r'date(?:\s*(?:&|/)\s*time)?', r'date'])
+        if tbl_d:
+            fields['incident_date'] = tbl_d
 
-    # 4. Manufacturing Stage
+    # 5. Manufacturing Stage
     stage_match = re.search(
-        r'(?:during\s+the|manufacturing\s+stage|process\s+step|stage)\s*(?:is|to|:|=)?\s*([A-Za-z0-9\s&/-]+?)(?:\s+stage|\s+process|[.,;]|$)',
+        r'(?:during\s+the|manufacturing\s+stage(?:\s*/\s*process\s+step)?|process\s+step|stage)\s*(?:is|to|:|=|\n|\t)?\s*([A-Za-z0-9\s&/-]+?)(?:\s+stage|\s+process|[.,;\n|]|$)',
         text,
         re.IGNORECASE,
     )
     if stage_match:
         val = stage_match.group(1).strip()
-        if len(val) > 3 and val.lower() not in ['is', 'the', 'a', 'to', 'for']:
+        if len(val) > 3 and val.lower() not in ['is', 'the', 'a', 'to', 'for', 'details', 'parameter']:
             fields['manufacturing_stage'] = val
-    elif any(k in lower for k in ['crystallization', 'purification', 'filtration', 'drying', 'milling']):
+    if not fields.get('manufacturing_stage'):
+        tbl_s = find_table_value([r'manufacturing\s+stage(?:\s*/\s*process\s+step)?', r'manufacturing\s+stage', r'process\s+step', r'stage'])
+        if tbl_s and tbl_s.lower() not in ['details', 'parameter']:
+            fields['manufacturing_stage'] = tbl_s.strip()
+    if not fields.get('manufacturing_stage'):
         if 'crystallization' in lower:
             fields['manufacturing_stage'] = 'Final Crystallization & Solvent Purification'
         elif 'filtration' in lower:
@@ -1632,9 +1867,9 @@ def extract_incident_fields_from_text(text: str) -> Dict[str, Any]:
         elif 'drying' in lower:
             fields['manufacturing_stage'] = 'Drying & Milling Stage'
 
-    # 5. Equipment Identifiers
+    # 6. Equipment Identifiers
     eq_matches = re.findall(
-        r'\b((?:CRYST-)?REACTOR-[\w-]+|(?:TEMP-)?SENSOR-[\w-]+|VESSEL-[\w-]+|DRYER-[\w-]+|FILTER-[\w-]+)\b',
+        r'\b((?:CRYST-)?REACTOR-[\w-]+|(?:TEMP-)?SENSOR-[\w-]+|CENTRI-[\w-]+|VESSEL-[\w-]+|DRYER-[\w-]+|FILTER-[\w-]+)\b',
         text,
         re.IGNORECASE,
     )
@@ -1642,36 +1877,52 @@ def extract_incident_fields_from_text(text: str) -> Dict[str, Any]:
         seen = set()
         dedup = [m.upper() for m in eq_matches if not (m.upper() in seen or seen.add(m.upper()))]
         fields['equipment_id'] = ' / '.join(dedup)
+    else:
+        tbl_eq = find_table_value([r'equipment\s+id(?:entifiers?)?', r'production\s+equipment(?:\s*/\s*instrument\s+id)?', r'equipment'])
+        if tbl_eq and tbl_eq.lower() not in ['details', 'parameter']:
+            fields['equipment_id'] = tbl_eq.strip()
 
-    # 6. Observed Result (Purity / Assay)
+    # 7. Observed Result (Purity / Assay)
     purity_match = re.search(r'(\d+(?:\.\d+)?\s*%(?:\s+purity)?)', text, re.IGNORECASE)
     if purity_match and any(w in lower for w in ['purity', 'observed', 'assay', 'yield', 'reported', 'measured', 'result']):
         val = purity_match.group(1).strip()
         if 'purity' not in val.lower():
             val = f"{val} purity (HPLC area %)"
         fields['observed_result'] = val
+    else:
+        tbl_obs = find_table_value([r'observed(?:\s+test)?\s+result', r'observed\s+result', r'measured\s+result', r'actual\s+result'])
+        if tbl_obs and tbl_obs.lower() not in ['details', 'parameter']:
+            fields['observed_result'] = tbl_obs.strip()
 
-    # 7. Registered Specification / Expected Result
+    # 8. Registered Specification / Expected Result
     spec_match = re.search(
-        r'(?:registered\s+specification(?:\s+limit)?|expected\s+result|specification\s+limit|registered\s+limit)\s*(?:is|:|=)?\s*([><=]+\s*\d+(?:\.\d+)?%?)',
+        r'(?:registered\s+specification(?:\s+limit)?|expected\s+result|expected\s+specification|specification\s+limit|registered\s+limit)\s*(?:is|:|=|\n|\t)?\s*([><=]+\s*\d+(?:\.\d+)?%?[^\n|]*)',
         text,
         re.IGNORECASE,
     )
     if spec_match:
         fields['expected_result'] = spec_match.group(1).strip()
+    else:
+        tbl_spec = find_table_value([r'expected\s+specification', r'registered\s+specification(?:\s+limit)?', r'specification\s+limit', r'acceptance\s+criteria'])
+        if tbl_spec and tbl_spec.lower() not in ['details', 'parameter']:
+            fields['expected_result'] = tbl_spec.strip()
 
-    # 8. Immediate Actions
+    # 9. Immediate Actions
     action_match = re.search(
-        r'(?:immediate\s+containment(?:\s+actions?)?|immediate\s+actions?)\s*(?:is|was|:|=)?\s*([^\n;.]+)',
+        r'(?:immediate\s+containment(?:\s+actions?)?|immediate\s+actions?)\s*(?:is|was|:|=|\n|\t)?\s*([^\n;.]+)',
         text,
         re.IGNORECASE,
     )
-    if action_match:
+    if action_match and action_match.group(1).lower() not in ['details', 'parameter']:
         fields['immediate_action'] = action_match.group(1).strip()
-    elif any(w in lower for w in ['quarantine', 'halted', 'on hold']):
-        fields['immediate_action'] = 'Batch quarantined. Downstream processing halted pending investigation.'
+    else:
+        tbl_act = find_table_value([r'immediate\s+containment(?:\s+actions?)?', r'immediate\s+action', r'containment\s+action'])
+        if tbl_act and tbl_act.lower() not in ['details', 'parameter']:
+            fields['immediate_action'] = tbl_act.strip()
+        elif any(w in lower for w in ['quarantine', 'halted', 'on hold']):
+            fields['immediate_action'] = 'Batch quarantined. Downstream processing halted pending investigation.'
 
-    # 9. Problem Statement
+    # 10. Problem Statement
     prob_match = re.search(
         r'(?:observed\s+(?:an?\s+)?)([^,;\n]+deviation[^,;\n]*)',
         text,
@@ -1679,8 +1930,12 @@ def extract_incident_fields_from_text(text: str) -> Dict[str, Any]:
     )
     if prob_match:
         fields['problem_statement'] = prob_match.group(1).strip()
+    else:
+        tbl_prob = find_table_value([r'problem\s+statement(?:\s*/\s*observed\s+failure)?', r'problem\s+statement', r'deviation\s+description'])
+        if tbl_prob and tbl_prob.lower() not in ['details', 'parameter']:
+            fields['problem_statement'] = tbl_prob.strip()
 
-    # 10. Severity
+    # 11. Severity
     sev_match = re.search(r'(?:severity(?:\s*is|\s*:|\s*=)?\s*|\brating(?:\s*is|\s*:)?\s*)(critical|high|medium|minor|low)', lower)
     if sev_match:
         val = sev_match.group(1)

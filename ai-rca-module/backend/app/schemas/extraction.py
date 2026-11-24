@@ -39,7 +39,7 @@ class IncidentFieldsSchema(BaseModel):
     observed_result: Optional[str] = Field(None, description="Out-of-specification or deviated value measured")
     immediate_action: Optional[str] = Field(None, description="Immediate containment actions described in source")
     equipment_id: Optional[str] = Field(None, description="Identifiers of equipment or instruments involved")
-    severity: str = Field(default="medium", description="Initial severity assessment: 'critical', 'high', 'medium', 'low'")
+    severity: Optional[str] = Field(default="medium", description="Initial severity assessment: 'critical', 'high', 'medium', 'low'")
 
     model_config = ConfigDict(from_attributes=True)
 
