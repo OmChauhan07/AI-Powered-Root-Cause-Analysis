@@ -281,4 +281,16 @@ export const fetchInvestigationDossier = async (investigationId) => {
   return response.data;
 };
 
+/**
+ * Send natural conversational message to AI Copilot
+ * Calls POST /api/investigations/{investigationId}/copilot/chat
+ */
+export const sendCopilotMessage = async (investigationId, message, conversationHistory = []) => {
+  const response = await apiClient.post(`/api/investigations/${investigationId}/copilot/chat`, {
+    message,
+    conversation_history: conversationHistory,
+  });
+  return response.data;
+};
+
 export default apiClient;

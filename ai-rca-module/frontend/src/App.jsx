@@ -1,15 +1,8 @@
-import React, { useState } from 'react';
-import CopilotWorkspace from './pages/CopilotWorkspace';
-import WorkspaceLayout from './layouts/WorkspaceLayout';
+import React from 'react';
+import InvestigationWorkspace from './pages/InvestigationWorkspace';
 
 export const App = () => {
-  const [viewMode, setViewMode] = useState('copilot');
-
-  if (viewMode === 'copilot') {
-    return <CopilotWorkspace onSwitchToStepper={() => setViewMode('stepper')} />;
-  }
-
-  return <WorkspaceLayout onSwitchToCopilot={() => setViewMode('copilot')} />;
+  return <InvestigationWorkspace />;
 };
 
 export default App;
