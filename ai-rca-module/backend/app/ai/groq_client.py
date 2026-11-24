@@ -14,9 +14,10 @@ def get_groq_llm():
     try:
         from langchain_groq import ChatGroq
 
+        model = settings.GROQ_MODEL or "openai/gpt-oss-120b"
         return ChatGroq(
             api_key=settings.GROQ_API_KEY,
-            model_name=settings.GROQ_MODEL,
+            model_name=model,
             temperature=0.2,
         )
     except Exception as exc:

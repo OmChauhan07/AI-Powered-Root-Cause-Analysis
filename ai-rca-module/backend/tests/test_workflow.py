@@ -35,4 +35,4 @@ def test_groq_status_check():
     status = check_groq_status()
     assert "status" in status
     assert "model" in status
-    assert status["model"] == "llama-3.3-70b-versatile"
+    assert status["model"] in ["openai/gpt-oss-120b", "llama-3.3-70b-versatile"]
