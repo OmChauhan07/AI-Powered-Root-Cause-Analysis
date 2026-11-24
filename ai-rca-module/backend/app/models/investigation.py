@@ -40,6 +40,7 @@ class Investigation(Base):
     # Selected RCA method and intermediate data
     investigation_method = Column(String(50), default="five_whys", nullable=True)
     rca_method_data = Column(JSON, nullable=True)
+    reviewer_note = Column(Text, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

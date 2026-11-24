@@ -176,6 +176,29 @@ export const investigationSlice = createSlice({
         if (effectiveness_check !== undefined) actionItem.effectiveness_check = effectiveness_check;
       }
     },
+    loadFullInvestigationDossier: (state, action) => {
+      const d = action.payload;
+      state.investigation = {
+        id: d.id || d.investigation?.id,
+        reference_code: d.reference_code || d.investigation?.reference_code,
+        title: d.title || d.investigation?.title,
+        status: d.status || d.investigation?.status,
+        created_at: d.created_at || d.investigation?.created_at,
+        updated_at: d.updated_at || d.investigation?.updated_at,
+        reviewer_note: d.reviewer_note || d.investigation?.reviewer_note,
+      };
+      if (d.incident_fields) {
+        state.incidentFields = { ...state.incidentFields, ...d.incident_fields };
+      }
+      if (d.extracted_facts) state.extractedFacts = d.extracted_facts;
+      if (d.evidence_records) state.evidenceRecords = d.evidence_records;
+      if (d.investigation_gaps) state.missingInformation = d.investigation_gaps;
+      if (d.five_whys_chains) state.fiveWhysChains = d.five_whys_chains;
+      if (d.fishbone_categories) state.fishboneCategories = d.fishbone_categories;
+      if (d.cause_candidates) state.causeCandidates = d.cause_candidates;
+      if (d.capa_actions) state.capaRecommendations = d.capa_actions;
+      if (d.source_documents) state.sourceDocuments = d.source_documents;
+    },
     loadSyntheticSampleData: (state) => {
       // Preloads synthetic API-X batch BATCH-2026-014 from sample-data.md
       state.investigation = {
@@ -345,6 +368,7 @@ export const {
   updateCauseCandidateStatus,
   setCapaRecommendations,
   updateCapaActionStatus,
+  loadFullInvestigationDossier,
   loadSyntheticSampleData,
   setExtractedFacts,
   setMissingInformation,

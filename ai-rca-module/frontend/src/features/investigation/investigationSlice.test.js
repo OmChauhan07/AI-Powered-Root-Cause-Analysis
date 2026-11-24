@@ -14,6 +14,7 @@ import reducer, {
   loadSyntheticSampleData,
   updateCauseCandidateStatus,
   updateCapaActionStatus,
+  loadFullInvestigationDossier,
   resetInvestigation,
 } from './investigationSlice.js';
 
@@ -155,4 +156,27 @@ test('resetInvestigation restores initial state', () => {
   assert.strictEqual(reset.activeStage, 'intake');
   assert.strictEqual(reset.incidentFields.product_name, '');
   assert.strictEqual(reset.sourceDocuments.length, 0);
+});
+
+test('loadFullInvestigationDossier populates state from backend dossier response', () => {
+  const dossier = {
+    investigation: { id: 'inv-dossier-test', status: 'reviewed', reviewer_note: 'Validated by QA' },
+    incident_fields: { product_name: 'API-X', batch_number: 'BATCH-2026-014' },
+    extracted_facts: [{ field_name: 'product_name', field_value: 'API-X', confidence: 0.95 }],
+    evidence_records: [{ id: 'ev-1', title: 'Calibration Cert' }],
+    investigation_gaps: [{ id: 'gap-1', field_or_record: 'Solvent COA', status: 'resolved' }],
+    cause_candidates: [{ id: 'c-1', candidate_text: 'Sensor drift', review_status: 'confirmed' }],
+    capa_actions: [{ id: 'capa-1', action_text: 'Recalibrate sensor', review_status: 'accepted' }],
+    source_documents: [{ id: 'doc-1', filename: 'report.pdf' }],
+  };
+
+  const loaded = reducer(undefined, loadFullInvestigationDossier(dossier));
+  assert.strictEqual(loaded.investigation.id, 'inv-dossier-test');
+  assert.strictEqual(loaded.incidentFields.product_name, 'API-X');
+  assert.strictEqual(loaded.extractedFacts.length, 1);
+  assert.strictEqual(loaded.evidenceRecords.length, 1);
+  assert.strictEqual(loaded.missingInformation.length, 1);
+  assert.strictEqual(loaded.causeCandidates[0].review_status, 'confirmed');
+  assert.strictEqual(loaded.capaRecommendations[0].review_status, 'accepted');
+  assert.strictEqual(loaded.sourceDocuments.length, 1);
 });

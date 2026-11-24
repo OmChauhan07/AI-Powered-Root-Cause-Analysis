@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 
 class FiveWhysStep(BaseModel):
@@ -13,7 +13,19 @@ class FiveWhysStep(BaseModel):
     missing_evidence: Optional[str] = Field(None, description="Evidence gap or test needed to confirm step")
     is_hypothesis: bool = Field(default=True, description="True if based on unverified inference; False if supported by primary data")
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapped = dict(data)
+            if "question" not in mapped and "why" in mapped:
+                mapped["question"] = mapped["why"]
+            if "answer" not in mapped and "because" in mapped:
+                mapped["answer"] = mapped["because"]
+            return mapped
+        return data
 
 
 class FishboneFactor(BaseModel):
@@ -27,7 +39,19 @@ class FishboneFactor(BaseModel):
     )
     supporting_evidence_ids: List[str] = Field(default_factory=list, description="IDs of linked evidence records")
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapped = dict(data)
+            if "factor" not in mapped and "cause" in mapped:
+                mapped["factor"] = mapped["cause"]
+            if "rationale" not in mapped and "detail" in mapped:
+                mapped["rationale"] = mapped["detail"]
+            return mapped
+        return data
 
 
 class FishboneCategories(BaseModel):

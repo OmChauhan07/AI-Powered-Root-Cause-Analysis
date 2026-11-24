@@ -249,4 +249,36 @@ export const reviewCapaAction = async (
   return response.data;
 };
 
+/**
+ * Update editable incident fields in PostgreSQL
+ * Calls PATCH /api/investigations/{investigationId}
+ */
+export const updateInvestigationFields = async (investigationId, fields) => {
+  const response = await apiClient.patch(`/api/investigations/${investigationId}`, fields);
+  return response.data;
+};
+
+/**
+ * Save and sign-off reviewed investigation dossier in PostgreSQL
+ * Calls POST /api/investigations/{investigationId}/save
+ */
+export const saveInvestigationDossier = async (investigationId, reviewerNote, status = 'reviewed', reviewerName = null, reviewerRole = null) => {
+  const response = await apiClient.post(`/api/investigations/${investigationId}/save`, {
+    reviewer_note: reviewerNote,
+    status,
+    reviewer_name: reviewerName,
+    reviewer_role: reviewerRole,
+  });
+  return response.data;
+};
+
+/**
+ * Retrieve complete investigation dossier for reload or export
+ * Calls GET /api/investigations/{investigationId}
+ */
+export const fetchInvestigationDossier = async (investigationId) => {
+  const response = await apiClient.get(`/api/investigations/${investigationId}`);
+  return response.data;
+};
+
 export default apiClient;

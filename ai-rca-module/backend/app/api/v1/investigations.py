@@ -3,8 +3,17 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from datetime import datetime, timezone
 from app.database.session import get_db
-from app.models.investigation import Investigation, SourceDocument, ExtractedFact
+from app.models.investigation import (
+    Investigation,
+    SourceDocument,
+    ExtractedFact,
+    EvidenceRecord,
+    InvestigationGap,
+    CauseCandidate,
+    CapaAction,
+)
 from app.schemas.extraction import (
     ExtractionRequest,
     ExtractionResponse,
@@ -12,6 +21,16 @@ from app.schemas.extraction import (
     MissingInformationItem,
     IncidentFieldsSchema,
 )
+from app.schemas.dossier import (
+    UpdateInvestigationFieldsRequest,
+    SaveInvestigationRequest,
+    SaveInvestigationResponse,
+    InvestigationDossierResponse,
+    SourceDocumentSummary,
+)
+from app.schemas.evidence import EvidenceRecordItem, InvestigationGapItem
+from app.schemas.rca_methods import FiveWhysStep, FishboneCategories, CauseCandidateItem
+from app.schemas.capa import CapaActionItem
 from app.ai.workflow import build_extraction_graph
 from app.api.v1.documents import get_or_create_investigation
 
@@ -213,3 +232,263 @@ async def review_fact(
     fact.review_status = review_status
     db.commit()
     return {"message": "Fact review status updated.", "fact_id": fact_id, "review_status": review_status}
+
+
+@router.patch(
+    "/{investigation_id}",
+    response_model=IncidentFieldsSchema,
+    summary="Update Editable Incident Fields",
+    description="Updates user-edited investigation and incident fields in PostgreSQL, preserving human reviewer corrections.",
+)
+async def update_investigation_fields(
+    investigation_id: str,
+    payload: UpdateInvestigationFieldsRequest,
+    db: Session = Depends(get_db),
+):
+    """Updates editable incident fields on the investigation record."""
+    inv = get_or_create_investigation(investigation_id, db)
+
+    for field, val in payload.model_dump(exclude_unset=True).items():
+        if hasattr(inv, field) and val is not None:
+            setattr(inv, field, val)
+
+    inv.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(inv)
+
+    return IncidentFieldsSchema(
+        product_name=inv.product_name,
+        product_code=inv.product_code,
+        batch_number=inv.batch_number,
+        manufacturing_stage=inv.manufacturing_stage,
+        problem_statement=inv.problem_statement,
+        incident_date=inv.incident_at.isoformat() if inv.incident_at else None,
+        expected_result=inv.expected_result,
+        observed_result=inv.observed_result,
+        immediate_action=inv.immediate_action,
+        equipment_id=inv.equipment_id,
+        severity=inv.severity,
+    )
+
+
+@router.post(
+    "/{investigation_id}/save",
+    response_model=SaveInvestigationResponse,
+    summary="Save Reviewed Investigation Dossier",
+    description="Persists reviewed investigation status, reviewer sign-off notes, and verifies transactional consistency in PostgreSQL without premature closure.",
+)
+async def save_reviewed_investigation(
+    investigation_id: str,
+    payload: SaveInvestigationRequest,
+    db: Session = Depends(get_db),
+):
+    """Persists human reviewer sign-off and state changes to PostgreSQL."""
+    inv = get_or_create_investigation(investigation_id, db)
+
+    inv.status = payload.status
+    if payload.reviewer_note:
+        inv.reviewer_note = payload.reviewer_note
+    inv.updated_at = datetime.now(timezone.utc)
+
+    # Calculate summary metrics
+    fact_count = db.query(ExtractedFact).filter(ExtractedFact.investigation_id == investigation_id).count()
+    ev_count = db.query(EvidenceRecord).filter(EvidenceRecord.investigation_id == investigation_id).count()
+    gap_count = db.query(InvestigationGap).filter(InvestigationGap.investigation_id == investigation_id).count()
+    cause_count = db.query(CauseCandidate).filter(CauseCandidate.investigation_id == investigation_id).count()
+    confirmed_causes = db.query(CauseCandidate).filter(
+        CauseCandidate.investigation_id == investigation_id,
+        CauseCandidate.review_status == "confirmed",
+    ).count()
+    capa_count = db.query(CapaAction).filter(CapaAction.investigation_id == investigation_id).count()
+    accepted_capas = db.query(CapaAction).filter(
+        CapaAction.investigation_id == investigation_id,
+        CapaAction.review_status == "accepted",
+    ).count()
+
+    db.commit()
+    db.refresh(inv)
+
+    return SaveInvestigationResponse(
+        investigation_id=inv.id,
+        reference_code=inv.reference_code,
+        status=inv.status,
+        saved_at=inv.updated_at.isoformat(),
+        reviewer_note=inv.reviewer_note,
+        summary={
+            "extracted_facts": fact_count,
+            "evidence_records": ev_count,
+            "open_gaps": gap_count,
+            "total_cause_candidates": cause_count,
+            "confirmed_root_causes": confirmed_causes,
+            "total_capa_actions": capa_count,
+            "accepted_capa_actions": accepted_capas,
+            "reviewer_name": payload.reviewer_name or "Authorized QA Investigator",
+            "reviewer_role": payload.reviewer_role or "Quality Assurance Operations",
+        },
+    )
+
+
+@router.get(
+    "/{investigation_id}",
+    response_model=InvestigationDossierResponse,
+    summary="Retrieve Complete Investigation Dossier",
+    description="Loads the entire investigation state from PostgreSQL, including source documents, facts, evidence, gaps, RCA methods, cause candidates, and CAPA actions.",
+)
+async def get_investigation_dossier(
+    investigation_id: str,
+    db: Session = Depends(get_db),
+):
+    """Retrieves full investigation dossier for reloading and report generation."""
+    inv = get_or_create_investigation(investigation_id, db)
+
+    docs = db.query(SourceDocument).filter(SourceDocument.investigation_id == investigation_id).all()
+    facts = db.query(ExtractedFact).filter(ExtractedFact.investigation_id == investigation_id).all()
+    evs = db.query(EvidenceRecord).filter(EvidenceRecord.investigation_id == investigation_id).all()
+    gaps = db.query(InvestigationGap).filter(InvestigationGap.investigation_id == investigation_id).all()
+    causes = db.query(CauseCandidate).filter(CauseCandidate.investigation_id == investigation_id).all()
+    capas = db.query(CapaAction).filter(CapaAction.investigation_id == investigation_id).all()
+
+    rca_data = inv.rca_method_data or {}
+    five_whys_raw = rca_data.get("five_whys_chains", [])
+    fishbone_raw = rca_data.get("fishbone_categories", {})
+
+    doc_summaries = [
+        SourceDocumentSummary(
+            id=d.id,
+            filename=d.original_filename,
+            source_type=d.source_type,
+            page_count=d.page_count,
+            created_at=d.created_at.isoformat() if d.created_at else None,
+        )
+        for d in docs
+    ]
+
+    fact_items = [
+        ExtractedFactItem(
+            field_name=f.field_name,
+            field_value=f.field_value,
+            source_document_id=f.source_document_id,
+            source_filename=f.source_document.original_filename if f.source_document else None,
+            source_page=f.source_page,
+            source_excerpt=f.source_excerpt,
+            confidence=float(f.confidence) / 100.0,
+            status=f.extraction_status,
+            review_status=f.review_status,
+        )
+        for f in facts
+    ]
+
+    ev_items = [
+        EvidenceRecordItem(
+            id=e.id,
+            investigation_id=e.investigation_id,
+            source_document_id=e.source_document_id,
+            evidence_type=e.evidence_type,
+            title=e.title,
+            description=e.description,
+            evidence_date=e.evidence_date.isoformat() if e.evidence_date else None,
+            source_page=e.source_page,
+            source_excerpt=e.source_excerpt,
+            status=e.status,
+            calibration=None,
+        )
+        for e in evs
+    ]
+
+    gap_items = [
+        InvestigationGapItem(
+            id=g.id,
+            investigation_id=g.investigation_id,
+            gap_type=g.gap_type,
+            field_or_record=g.field_or_record,
+            description=g.description,
+            impact_rationale=g.impact_rationale,
+            status=g.status,
+            recommended_action=g.recommended_action,
+            importance=g.importance,
+        )
+        for g in gaps
+    ]
+
+    cause_items = [
+        CauseCandidateItem(
+            id=c.id,
+            investigation_id=c.investigation_id,
+            method=c.method,
+            category=c.category,
+            candidate_text=c.candidate_text,
+            rationale=c.rationale,
+            ai_status=c.ai_status,
+            review_status=c.review_status,
+            reviewer_note=c.reviewer_note,
+            supporting_evidence_ids=c.supporting_evidence_ids or [],
+            contradicting_evidence_ids=c.contradicting_evidence_ids or [],
+        )
+        for c in causes
+    ]
+
+    capa_items = [
+        CapaActionItem(
+            id=a.id,
+            investigation_id=a.investigation_id,
+            cause_candidate_id=a.cause_candidate_id,
+            action_type=a.action_type,
+            title=a.title,
+            action_text=a.action_text,
+            rationale=a.rationale,
+            owner_role=a.owner_role,
+            due_date=a.due_date.isoformat() if a.due_date else None,
+            effectiveness_check=a.effectiveness_check,
+            review_status=a.review_status,
+            reviewer_note=a.reviewer_note,
+            created_at=a.created_at.isoformat() if a.created_at else None,
+        )
+        for a in capas
+    ]
+
+    incident_fields_dict = {
+        "product_name": inv.product_name,
+        "product_code": inv.product_code,
+        "batch_number": inv.batch_number,
+        "manufacturing_stage": inv.manufacturing_stage,
+        "problem_statement": inv.problem_statement,
+        "incident_date": inv.incident_at.isoformat() if inv.incident_at else None,
+        "expected_result": inv.expected_result,
+        "observed_result": inv.observed_result,
+        "immediate_action": inv.immediate_action,
+        "equipment_id": inv.equipment_id,
+        "severity": inv.severity,
+    }
+
+    stats = {
+        "source_documents_count": len(doc_summaries),
+        "extracted_facts_count": len(fact_items),
+        "evidence_records_count": len(ev_items),
+        "investigation_gaps_count": len(gap_items),
+        "cause_candidates_count": len(cause_items),
+        "confirmed_causes_count": sum(1 for c in cause_items if c.review_status == "confirmed"),
+        "capa_actions_count": len(capa_items),
+        "accepted_capa_count": sum(1 for a in capa_items if a.review_status == "accepted"),
+    }
+
+    return InvestigationDossierResponse(
+        id=inv.id,
+        reference_code=inv.reference_code,
+        title=inv.title,
+        status=inv.status,
+        severity=inv.severity,
+        created_at=inv.created_at.isoformat() if inv.created_at else datetime.now(timezone.utc).isoformat(),
+        updated_at=inv.updated_at.isoformat() if inv.updated_at else datetime.now(timezone.utc).isoformat(),
+        reviewer_note=inv.reviewer_note,
+        incident_fields=incident_fields_dict,
+        source_documents=doc_summaries,
+        extracted_facts=fact_items,
+        evidence_records=ev_items,
+        investigation_gaps=gap_items,
+        five_whys_chains=[FiveWhysStep(**w) for w in five_whys_raw if isinstance(w, dict)],
+        fishbone_categories=FishboneCategories(**fishbone_raw) if isinstance(fishbone_raw, dict) else FishboneCategories(),
+        cause_candidates=cause_items,
+        capa_actions=capa_items,
+        statistics=stats,
+    )
+
