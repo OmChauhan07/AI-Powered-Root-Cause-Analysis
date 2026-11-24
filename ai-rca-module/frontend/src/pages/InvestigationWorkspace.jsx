@@ -10,6 +10,7 @@ import {
   setCapaRecommendations,
   addSourceDocument,
   loadSyntheticSampleData,
+  resetInvestigation,
 } from '../features/investigation/investigationSlice';
 import {
   uploadEvidenceDocument,
@@ -18,6 +19,7 @@ import {
   triggerRcaAnalysis,
   triggerCapaGeneration,
   sendCopilotMessage,
+  updateInvestigationFields,
 } from '../services/api';
 import FinalReviewModal from '../components/FinalReviewModal';
 
@@ -38,12 +40,17 @@ export const InvestigationWorkspace = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
 
+  // Existing database record state & change tracking
+  const [isExistingRecord, setIsExistingRecord] = useState(false);
+  const [recordRefCode, setRecordRefCode] = useState(null);
+  const [saveNotice, setSaveNotice] = useState(null);
+
   // Multi-turn conversation messages state
   const [messages, setMessages] = useState([
     {
       id: 'msg-welcome',
       sender: 'assistant',
-      text: 'Welcome to the AI RCA Module. I am your pharmaceutical quality investigation copilot. You can upload an incident report (PDF/TXT), paste investigation notes, or speak naturally to log deviations, run 5 Whys analysis, or formulate CAPAs.',
+      text: 'Welcome to the AI RCA Module. I am your pharmaceutical quality investigation copilot. You can upload an incident report (PDF/TXT), paste investigation notes, speak naturally to log deviations, or ask me to retrieve a previously saved investigation by product name or batch number.',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -60,6 +67,48 @@ export const InvestigationWorkspace = () => {
 
   const handleFieldChange = (fieldName, value) => {
     dispatch(setIncidentField({ field: fieldName, value }));
+  };
+
+  // Start Fresh Investigation Chat Session
+  const handleStartNewChat = () => {
+    dispatch(resetInvestigation());
+    setIsExistingRecord(false);
+    setRecordRefCode(null);
+    setSaveNotice(null);
+    setMessages([
+      {
+        id: 'msg-welcome-new',
+        sender: 'assistant',
+        text: 'Started a new investigation session. You can upload an incident report (PDF/TXT), paste notes, speak naturally to log a new deviation, or ask me to retrieve a previously saved investigation by product name or batch number.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      },
+    ]);
+  };
+
+  // Update / Change Existing Incident Fields in PostgreSQL
+  const handleUpdateIncident = async () => {
+    setIsProcessing(true);
+    const invId = investigation.id || 'inv-copilot';
+    try {
+      await updateInvestigationFields(invId, fields);
+      setSaveNotice('✓ Changes successfully updated in PostgreSQL database.');
+      setTimeout(() => setSaveNotice(null), 5000);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `asst-update-${Date.now()}`,
+          sender: 'assistant',
+          text: `✓ Updated investigation record (${recordRefCode || invId}) with your latest changes in the PostgreSQL database.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    } catch (err) {
+      const detail = err.response?.data?.detail || err.message || 'Error updating record.';
+      setSaveNotice(`⚠️ Update error: ${detail}`);
+      setTimeout(() => setSaveNotice(null), 5000);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // Conversational LLM-like message dispatch
@@ -89,24 +138,46 @@ export const InvestigationWorkspace = () => {
       // Call conversational copilot API
       const res = await sendCopilotMessage(invId, text, history);
 
+      // Handle session reset
+      if (res.intent === 'reset_session') {
+        handleStartNewChat();
+        return;
+      }
+
+      // Handle retrieved or existing investigation
+      if (res.intent === 'retrieve_investigation' || res.is_existing_record) {
+        setIsExistingRecord(true);
+        if (res.reference_code) {
+          setRecordRefCode(res.reference_code);
+        }
+      }
+
       // 1. Synchronize live form fields if Copilot extracted or updated fields
       if (res.field_updates && Object.keys(res.field_updates).length > 0) {
         dispatch(setIncidentFields({ fields: res.field_updates, overwrite: true }));
       }
 
       // 2. Synchronize 5 Whys causal chain if present
-      if (res.five_whys_chain && res.five_whys_chain.length > 0) {
-        dispatch(updateFiveWhysChain(res.five_whys_chain));
+      const chains = res.five_whys_chain || res.five_whys_chains;
+      if (chains && chains.length > 0) {
+        dispatch(updateFiveWhysChain(chains));
       }
 
       // 3. Synchronize CAPA actions if present
-      if (res.capa_actions && res.capa_actions.length > 0) {
-        dispatch(setCapaRecommendations(res.capa_actions));
+      const capas = res.capa_actions || res.capa_recommendations;
+      if (capas && capas.length > 0) {
+        dispatch(setCapaRecommendations(capas));
       }
 
       // 4. Synchronize missing evidence gaps if present
-      if (res.missing_gaps && res.missing_gaps.length > 0) {
-        dispatch(setMissingInformation(res.missing_gaps));
+      const gaps = res.missing_gaps || res.investigation_gaps;
+      if (gaps && gaps.length > 0) {
+        dispatch(setMissingInformation(gaps));
+      }
+
+      // 5. Synchronize cause candidates if present
+      if (res.cause_candidates && res.cause_candidates.length > 0) {
+        dispatch(setCauseCandidates(res.cause_candidates));
       }
 
       const assistantReply = {
@@ -114,9 +185,9 @@ export const InvestigationWorkspace = () => {
         sender: 'assistant',
         text: res.reply || 'Incident investigation state updated.',
         fieldUpdates: res.field_updates,
-        fiveWhysChain: res.five_whys_chain,
-        capaActions: res.capa_actions,
-        missingGaps: res.missing_gaps,
+        fiveWhysChain: chains,
+        capaActions: capas,
+        missingGaps: gaps,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, assistantReply]);
@@ -227,12 +298,14 @@ export const InvestigationWorkspace = () => {
   // Preload Synthetic Sample Scenario
   const handleLoadSample = () => {
     dispatch(loadSyntheticSampleData());
+    setIsExistingRecord(true);
+    setRecordRefCode('RCA-2026-001');
     setMessages((prev) => [
       ...prev,
       {
         id: `asst-sample-${Date.now()}`,
         sender: 'assistant',
-        text: 'Preloaded pharmaceutical benchmark scenario: API-X Batch BATCH-2026-014 Out-of-Specification. Observed purity 98.1% (Registered spec >= 99.0%). Calibration record for TEMP-SENSOR-014 attached (+0.8°C positive bias).',
+        text: 'Preloaded pharmaceutical benchmark scenario: API-X Batch BATCH-2026-014 Out-of-Specification. Observed purity 98.1% (Registered spec >= 99.0%). Calibration record for TEMP-SENSOR-014 attached (+0.8°C positive bias). Workspace is now in update mode.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       },
     ]);
@@ -243,6 +316,13 @@ export const InvestigationWorkspace = () => {
     setIsProcessing(true);
     const invId = investigation.id || 'inv-copilot';
     try {
+      // Sync fields first
+      await updateInvestigationFields(invId, fields).catch(() => {});
+      setIsExistingRecord(true);
+      if (investigation.reference_code) {
+        setRecordRefCode(investigation.reference_code);
+      }
+
       const res = await triggerRcaAnalysis(invId, 'five_whys');
       if (res.chains && res.chains.five_whys) {
         dispatch(updateFiveWhysChain(res.chains.five_whys));
@@ -415,6 +495,11 @@ export const InvestigationWorkspace = () => {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {isExistingRecord && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded text-[11px] font-bold border border-emerald-600 bg-emerald-50 text-emerald-800">
+                  ● SAVED RECORD: {recordRefCode || 'POSTGRESQL'}
+                </span>
+              )}
               <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border border-black bg-white text-black">
                 {investigation.status ? investigation.status.toUpperCase() : 'TRIAGE READY'}
               </span>
@@ -701,18 +786,40 @@ export const InvestigationWorkspace = () => {
 
             {/* Form Primary Action Footer */}
             <div className="pt-4 border-t border-black flex items-center justify-between">
-              <div className="text-xs text-black/70">
-                Methodology: <strong>5 Whys Root Cause Analysis (Exclusive)</strong>
+              <div className="text-xs text-black/70 flex items-center gap-2">
+                {isExistingRecord ? (
+                  <span className="text-emerald-700 font-semibold flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block"></span>
+                    Saved Record: <strong>{recordRefCode || investigation.id}</strong>
+                  </span>
+                ) : (
+                  <span>Methodology: <strong>5 Whys Root Cause Analysis (Exclusive)</strong></span>
+                )}
+                {saveNotice && (
+                  <span className="font-bold text-black border-l border-black/30 pl-2">{saveNotice}</span>
+                )}
               </div>
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleRun5Whys}
-                  disabled={isProcessing}
-                  className="text-xs font-bold px-4 py-2 bg-black text-white rounded-md hover:opacity-85 transition-opacity disabled:opacity-50"
-                >
-                  ⚡ Commit Incident & Run 5 Whys
-                </button>
+                {isExistingRecord ? (
+                  <button
+                    type="button"
+                    onClick={handleUpdateIncident}
+                    disabled={isProcessing}
+                    className="text-xs font-bold px-4 py-2 bg-black text-white rounded-md hover:opacity-85 transition-opacity disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
+                    title="Update and persist incident fields to PostgreSQL database"
+                  >
+                    <span>🔄</span> Update / Change Incident
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleRun5Whys}
+                    disabled={isProcessing}
+                    className="text-xs font-bold px-4 py-2 bg-black text-white rounded-md hover:opacity-85 transition-opacity disabled:opacity-50"
+                  >
+                    ⚡ Commit Incident & Run 5 Whys
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setIsReviewModalOpen(true)}
@@ -744,6 +851,17 @@ export const InvestigationWorkspace = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleStartNewChat}
+                className="text-xs font-semibold px-2.5 py-1 border border-black rounded hover:bg-black hover:text-white transition-colors flex items-center gap-1 text-black shadow-sm"
+                title="Start a fresh investigation session and reset the live form"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span>New Chat</span>
+              </button>
               <span
                 className={`w-2.5 h-2.5 rounded-full inline-block ${
                   isProcessing ? 'bg-amber-500 animate-pulse' : 'bg-black'
@@ -992,6 +1110,10 @@ export const InvestigationWorkspace = () => {
       <FinalReviewModal
         isOpen={isReviewModalOpen}
         onClose={() => setIsReviewModalOpen(false)}
+        onSaved={(savedRef) => {
+          setIsExistingRecord(true);
+          setRecordRefCode(savedRef);
+        }}
       />
     </div>
   );

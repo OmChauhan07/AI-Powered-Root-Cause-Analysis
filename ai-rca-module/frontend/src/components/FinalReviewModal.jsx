@@ -8,7 +8,7 @@ import {
 } from '../features/investigation/investigationSlice';
 import { saveInvestigationDossier, updateInvestigationFields } from '../services/api';
 
-export const FinalReviewModal = ({ isOpen, onClose }) => {
+export const FinalReviewModal = ({ isOpen, onClose, onSaved }) => {
   const dispatch = useDispatch();
   const investigation = useSelector((state) => state.investigation.investigation);
   const fields = useSelector((state) => state.investigation.incidentFields);
@@ -53,14 +53,20 @@ export const FinalReviewModal = ({ isOpen, onClose }) => {
         reviewerRole
       );
 
+      const savedRef = saveRes.reference_code || `RCA-${new Date().getFullYear()}-001`;
+
       setSaveSuccess({
-        referenceCode: saveRes.reference_code || `RCA-${new Date().getFullYear()}-001`,
+        referenceCode: savedRef,
         savedAt: new Date().toLocaleTimeString(),
         status: saveRes.status || status,
       });
 
       if (saveRes.investigation) {
         dispatch(loadFullInvestigationDossier(saveRes));
+      }
+
+      if (onSaved) {
+        onSaved(savedRef);
       }
     } catch (err) {
       setSaveError(err.message || 'Failed to persist investigation dossier to PostgreSQL.');
