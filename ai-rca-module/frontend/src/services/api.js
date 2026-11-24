@@ -293,4 +293,16 @@ export const sendCopilotMessage = async (investigationId, message, conversationH
   return response.data;
 };
 
+/**
+ * Check if batch number is already recorded in another investigation
+ * Calls GET /api/investigations/check-duplicate?batch_number=...
+ */
+export const checkDuplicateBatch = async (batchNumber, excludeId = null) => {
+  const params = new URLSearchParams();
+  if (batchNumber) params.append('batch_number', batchNumber);
+  if (excludeId) params.append('exclude_id', excludeId);
+  const response = await apiClient.get(`/api/investigations/check-duplicate?${params.toString()}`);
+  return response.data;
+};
+
 export default apiClient;

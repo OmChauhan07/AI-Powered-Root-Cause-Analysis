@@ -367,6 +367,57 @@ async def search_investigations(
 
 
 @router.get(
+    "/check-duplicate",
+    summary="Validate Duplicate Incident Parameters",
+    description="Checks whether incident parameters (e.g. batch number) already exist in an existing investigation in PostgreSQL.",
+)
+async def check_duplicate_parameters(
+    batch_number: Optional[str] = None,
+    product_code: Optional[str] = None,
+    exclude_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Validates if a batch number or product code is already recorded in another investigation."""
+    if not batch_number or not batch_number.strip():
+        return {
+            "is_duplicate": False,
+            "field": "batch_number",
+            "message": "No batch number provided for duplicate check.",
+            "existing_investigation": None,
+        }
+
+    clean_batch = batch_number.strip()
+    query = db.query(Investigation).filter(Investigation.batch_number.ilike(clean_batch))
+    if exclude_id and exclude_id.strip():
+        query = query.filter(Investigation.id != exclude_id.strip())
+
+    match = query.order_by(Investigation.updated_at.desc()).first()
+    if match:
+        return {
+            "is_duplicate": True,
+            "field": "batch_number",
+            "message": f"Batch '{match.batch_number}' is already recorded under investigation {match.reference_code} (Product: {match.product_name or 'N/A'}).",
+            "existing_investigation": {
+                "id": match.id,
+                "reference_code": match.reference_code,
+                "title": match.title,
+                "product_name": match.product_name,
+                "product_code": match.product_code,
+                "batch_number": match.batch_number,
+                "status": match.status,
+                "updated_at": match.updated_at.isoformat() if match.updated_at else None,
+            },
+        }
+
+    return {
+        "is_duplicate": False,
+        "field": "batch_number",
+        "message": f"Batch '{clean_batch}' is unique and not previously recorded.",
+        "existing_investigation": None,
+    }
+
+
+@router.get(
     "/{investigation_id}",
     response_model=InvestigationDossierResponse,
     summary="Retrieve Complete Investigation Dossier",

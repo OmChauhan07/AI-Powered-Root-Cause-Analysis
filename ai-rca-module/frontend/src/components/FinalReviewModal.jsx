@@ -6,7 +6,7 @@ import {
   updateCapaActionStatus,
   loadFullInvestigationDossier,
 } from '../features/investigation/investigationSlice';
-import { saveInvestigationDossier, updateInvestigationFields } from '../services/api';
+import { saveInvestigationDossier, updateInvestigationFields, checkDuplicateBatch } from '../services/api';
 
 export const FinalReviewModal = ({ isOpen, onClose, onSaved }) => {
   const dispatch = useDispatch();
@@ -26,6 +26,8 @@ export const FinalReviewModal = ({ isOpen, onClose, onSaved }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(null);
   const [saveError, setSaveError] = useState(null);
+  const [duplicateWarning, setDuplicateWarning] = useState(null);
+  const [allowDuplicateProceed, setAllowDuplicateProceed] = useState(false);
 
   if (!isOpen) return null;
 
@@ -33,12 +35,26 @@ export const FinalReviewModal = ({ isOpen, onClose, onSaved }) => {
     dispatch(setIncidentField({ field: fieldName, value }));
   };
 
-  const handleSaveToPostgres = async () => {
+  const handleSaveToPostgres = async (forceProceed = false) => {
     setIsSaving(true);
     setSaveError(null);
     setSaveSuccess(null);
 
     const invId = investigation.id || 'inv-copilot';
+
+    // Duplicate check before creating redundant investigations
+    if (!allowDuplicateProceed && !forceProceed && fields.batch_number) {
+      try {
+        const dup = await checkDuplicateBatch(fields.batch_number.trim(), investigation.id);
+        if (dup.is_duplicate) {
+          setDuplicateWarning(dup.message);
+          setIsSaving(false);
+          return;
+        }
+      } catch {
+        // proceed if duplicate check fails
+      }
+    }
 
     try {
       // 1. Sync fields to PostgreSQL
@@ -142,6 +158,42 @@ export const FinalReviewModal = ({ isOpen, onClose, onSaved }) => {
           {saveError && (
             <div className="p-3 bg-red-50 border border-red-600 rounded-md text-red-900 text-xs">
               <strong>Notice:</strong> {saveError} (Verify database connectivity on port 5432).
+            </div>
+          )}
+
+          {/* Duplicate Batch Confirmation Banner */}
+          {duplicateWarning && (
+            <div className="p-3 bg-amber-50 border border-amber-400 rounded-md text-xs text-amber-950 flex items-start justify-between gap-3">
+              <div>
+                <div className="font-bold flex items-center gap-1 text-amber-900">
+                  <span>⚠️</span>
+                  <span>Duplicate Batch Detected</span>
+                </div>
+                <p className="mt-1 text-[11px] text-amber-900">{duplicateWarning}</p>
+                <p className="mt-0.5 text-[10px] text-amber-800">
+                  Saving another investigation for this batch may cause duplicate records. You can proceed if this is an intentional re-investigation.
+                </p>
+              </div>
+              <div className="flex gap-2 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAllowDuplicateProceed(true);
+                    setDuplicateWarning(null);
+                    handleSaveToPostgres(true);
+                  }}
+                  className="px-2.5 py-1 text-[11px] bg-amber-800 text-white font-bold rounded hover:bg-amber-900"
+                >
+                  Save Anyway
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDuplicateWarning(null)}
+                  className="px-2.5 py-1 text-[11px] border border-amber-600 text-amber-950 rounded hover:bg-amber-100"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
 

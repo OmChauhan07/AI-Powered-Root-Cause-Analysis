@@ -527,8 +527,58 @@ async def chat_with_copilot(
         investigation_status=inv.status,
     )
 
-    # 3. Apply any field updates to database
-    field_updates = copilot_result.get("field_updates", {})
+    # 3. Apply any field updates to database with duplicate and redundant fill prevention
+    raw_field_updates = copilot_result.get("field_updates", {})
+    duplicate_warning = None
+    duplicate_batch_info = None
+
+    # A. Redundant duplicate re-fill prevention:
+    # Check if fields are already filled with these exact values in the current form
+    identical_fields = []
+    field_updates = {}
+    for f_name, f_val in raw_field_updates.items():
+        curr_val = getattr(inv, f_name, None)
+        if curr_val is not None and str(curr_val).strip().lower() == str(f_val).strip().lower():
+            identical_fields.append(f_name)
+        else:
+            field_updates[f_name] = f_val
+
+    if raw_field_updates and not field_updates and copilot_result.get("intent") in ["add_incident_info", "update_field"]:
+        identical_names = [f.replace("_", " ") for f in identical_fields]
+        copilot_result["assistant_message"] = (
+            f"The field(s) {', '.join(identical_names)} are already filled with these exact details in the form. "
+            f"No duplicate changes were applied."
+        )
+
+    # B. Database duplicate check:
+    # Check if the batch number is already recorded in another saved investigation
+    candidate_batch = raw_field_updates.get("batch_number") or inv.batch_number
+    if candidate_batch and isinstance(candidate_batch, str) and candidate_batch.strip():
+        c_batch_clean = candidate_batch.strip()
+        dup_inv = db.query(Investigation).filter(
+            Investigation.batch_number.ilike(c_batch_clean),
+            Investigation.id != inv.id,
+        ).order_by(Investigation.updated_at.desc()).first()
+
+        if dup_inv:
+            duplicate_warning = (
+                f"⚠️ Duplicate Batch Notice: Batch '{c_batch_clean}' is already recorded in saved investigation "
+                f"{dup_inv.reference_code} (Product: {dup_inv.product_name or 'N/A'})."
+            )
+            duplicate_batch_info = {
+                "id": dup_inv.id,
+                "reference_code": dup_inv.reference_code,
+                "product_name": dup_inv.product_name,
+                "batch_number": dup_inv.batch_number,
+                "status": dup_inv.status,
+            }
+            if raw_field_updates.get("batch_number"):
+                asst_text = copilot_result.get("assistant_message", "")
+                copilot_result["assistant_message"] = (
+                    f"{duplicate_warning} If this is the same investigation, you can ask me to retrieve it or update it directly. "
+                    f"Otherwise, I have populated the form for your new record.\n\n{asst_text}"
+                )
+
     if field_updates:
         for f_name, f_val in field_updates.items():
             if hasattr(inv, f_name) and f_val is not None:
@@ -610,4 +660,6 @@ async def chat_with_copilot(
         retrieved_investigation_id=inv.id,
         reference_code=inv.reference_code,
         is_existing_record=is_existing,
+        duplicate_warning=duplicate_warning,
+        duplicate_batch_info=duplicate_batch_info,
     )

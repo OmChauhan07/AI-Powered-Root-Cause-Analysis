@@ -401,3 +401,87 @@ def test_copilot_retrieve_specific_date(client, test_db):
     assert data["field_updates"]["product_name"] == "Paracetamol Granules"
     assert data["field_updates"]["batch_number"] == "BATCH-2026-1120-X"
 
+
+def test_check_duplicate_batch_endpoint(client, test_db):
+    """GET /api/investigations/check-duplicate verifies whether a batch is already used."""
+    inv = Investigation(
+        id="inv-dup-check-1",
+        reference_code="RCA-DUP-01",
+        title="Existing Batch Test",
+        product_name="Aspirin USP",
+        batch_number="BATCH-ASP-999",
+    )
+    test_db.add(inv)
+    test_db.commit()
+
+    # Query with identical batch
+    resp = client.get("/api/investigations/check-duplicate?batch_number=BATCH-ASP-999")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_duplicate"] is True
+    assert "BATCH-ASP-999" in data["message"]
+    assert data["existing_investigation"]["reference_code"] == "RCA-DUP-01"
+
+    # Query with exclude_id
+    resp_ex = client.get("/api/investigations/check-duplicate?batch_number=BATCH-ASP-999&exclude_id=inv-dup-check-1")
+    assert resp_ex.status_code == 200
+    assert resp_ex.json()["is_duplicate"] is False
+
+    # Query with unique batch
+    resp_uniq = client.get("/api/investigations/check-duplicate?batch_number=BATCH-BRAND-NEW")
+    assert resp_uniq.status_code == 200
+    assert resp_uniq.json()["is_duplicate"] is False
+
+
+def test_copilot_duplicate_batch_warning(client, test_db):
+    """Providing a batch that exists in another investigation triggers duplicate_warning in Copilot."""
+    existing = Investigation(
+        id="inv-prior-batch",
+        reference_code="RCA-PRIOR-55",
+        title="Prior Deviation",
+        product_name="Metformin HCl",
+        batch_number="BATCH-MET-777",
+    )
+    test_db.add(existing)
+    test_db.commit()
+
+    payload = {
+        "message": "We observed a failure in batch BATCH-MET-777 for Metformin.",
+        "conversation_history": [],
+    }
+    resp = client.post("/api/investigations/inv-new-draft-2/copilot/chat", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["duplicate_warning"] is not None
+    assert "RCA-PRIOR-55" in data["duplicate_warning"]
+    assert data["duplicate_batch_info"] is not None
+    assert data["duplicate_batch_info"]["reference_code"] == "RCA-PRIOR-55"
+    assert "RCA-PRIOR-55" in data["reply"]
+
+
+def test_copilot_redundant_fill_prevention(client, test_db):
+    """Providing details that are already identically recorded in the form avoids redundant re-fill."""
+    inv = Investigation(
+        id="inv-already-filled",
+        reference_code="RCA-ALREADY-01",
+        title="Form Fill Test",
+        product_name="Paracetamol",
+        batch_number="BATCH-2026-014",
+    )
+    test_db.add(inv)
+    test_db.commit()
+
+    payload = {
+        "message": "The batch number is BATCH-2026-014 and product is Paracetamol.",
+        "conversation_history": [],
+    }
+    resp = client.post("/api/investigations/inv-already-filled/copilot/chat", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # field_updates should be empty because values are already identical
+    assert len(data.get("field_updates", {})) == 0
+    assert "already filled" in data["reply"].lower()
+
+

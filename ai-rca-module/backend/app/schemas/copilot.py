@@ -62,5 +62,7 @@ class CopilotChatResponse(BaseModel):
     retrieved_investigation_id: Optional[str] = Field(default=None, description="ID of retrieved existing investigation")
     reference_code: Optional[str] = Field(default=None, description="Reference code of the investigation (e.g. RCA-2026-001)")
     is_existing_record: bool = Field(default=False, description="Whether this investigation exists in PostgreSQL database")
+    duplicate_warning: Optional[str] = Field(default=None, description="Warning if batch or incident parameter is already recorded in another investigation")
+    duplicate_batch_info: Optional[Dict[str, Any]] = Field(default=None, description="Summary details of the existing duplicate record if detected")
 
     model_config = ConfigDict(from_attributes=True)

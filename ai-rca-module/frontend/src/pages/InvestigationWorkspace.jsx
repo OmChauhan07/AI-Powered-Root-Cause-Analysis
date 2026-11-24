@@ -20,6 +20,7 @@ import {
   triggerCapaGeneration,
   sendCopilotMessage,
   updateInvestigationFields,
+  checkDuplicateBatch,
 } from '../services/api';
 import FinalReviewModal from '../components/FinalReviewModal';
 
@@ -45,6 +46,11 @@ export const InvestigationWorkspace = () => {
   const [recordRefCode, setRecordRefCode] = useState(null);
   const [saveNotice, setSaveNotice] = useState(null);
 
+  // Duplicate batch validation state
+  const [duplicateBatchNotice, setDuplicateBatchNotice] = useState(null);
+  const [duplicateBatchInfo, setDuplicateBatchInfo] = useState(null);
+  const dupCheckTimerRef = useRef(null);
+
   // Multi-turn conversation messages state
   const [messages, setMessages] = useState([
     {
@@ -67,6 +73,33 @@ export const InvestigationWorkspace = () => {
 
   const handleFieldChange = (fieldName, value) => {
     dispatch(setIncidentField({ field: fieldName, value }));
+
+    // Real-time duplicate check for batch number
+    if (fieldName === 'batch_number') {
+      if (dupCheckTimerRef.current) {
+        clearTimeout(dupCheckTimerRef.current);
+      }
+      if (!value || !value.trim()) {
+        setDuplicateBatchNotice(null);
+        setDuplicateBatchInfo(null);
+        return;
+      }
+      dupCheckTimerRef.current = setTimeout(async () => {
+        try {
+          const invId = isExistingRecord ? (investigation.id || recordRefCode) : null;
+          const res = await checkDuplicateBatch(value.trim(), invId);
+          if (res.is_duplicate) {
+            setDuplicateBatchNotice(res.message);
+            setDuplicateBatchInfo(res.existing_investigation);
+          } else {
+            setDuplicateBatchNotice(null);
+            setDuplicateBatchInfo(null);
+          }
+        } catch {
+          // ignore network error in background check
+        }
+      }, 500);
+    }
   };
 
   // Start Fresh Investigation Chat Session
@@ -75,6 +108,8 @@ export const InvestigationWorkspace = () => {
     setIsExistingRecord(false);
     setRecordRefCode(null);
     setSaveNotice(null);
+    setDuplicateBatchNotice(null);
+    setDuplicateBatchInfo(null);
     setMessages([
       {
         id: 'msg-welcome-new',
@@ -150,6 +185,24 @@ export const InvestigationWorkspace = () => {
         if (res.reference_code) {
           setRecordRefCode(res.reference_code);
         }
+      }
+
+      // Check for duplicate batch detection from Copilot response
+      if (res.duplicate_warning) {
+        setDuplicateBatchNotice(res.duplicate_warning);
+        setDuplicateBatchInfo(res.duplicate_batch_info);
+      } else if (res.field_updates?.batch_number && !isExistingRecord) {
+        checkDuplicateBatch(res.field_updates.batch_number, invId)
+          .then((chk) => {
+            if (chk.is_duplicate) {
+              setDuplicateBatchNotice(chk.message);
+              setDuplicateBatchInfo(chk.existing_investigation);
+            } else {
+              setDuplicateBatchNotice(null);
+              setDuplicateBatchInfo(null);
+            }
+          })
+          .catch(() => {});
       }
 
       // 1. Synchronize live form fields if Copilot extracted or updated fields
@@ -569,8 +622,32 @@ export const InvestigationWorkspace = () => {
                   value={fields.batch_number || ''}
                   onChange={(e) => handleFieldChange('batch_number', e.target.value)}
                   placeholder="e.g. BATCH-2026-014"
-                  className="w-full px-3 py-1.5 text-xs bg-white text-black border border-black rounded-md font-medium"
+                  className={`w-full px-3 py-1.5 text-xs bg-white text-black border rounded-md font-medium ${
+                    duplicateBatchNotice && !isExistingRecord
+                      ? 'border-amber-600 bg-amber-50/50 text-amber-950 font-semibold'
+                      : 'border-black'
+                  }`}
                 />
+                {duplicateBatchNotice && !isExistingRecord && (
+                  <div className="mt-1 flex items-start justify-between gap-1 text-[11px] text-amber-900 bg-amber-50 border border-amber-300 p-1.5 rounded">
+                    <span className="flex items-center gap-1 font-medium leading-tight">
+                      <span>⚠️</span>
+                      <span>{duplicateBatchNotice}</span>
+                    </span>
+                    {duplicateBatchInfo?.reference_code && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInputMessage(`Retrieve investigation ${duplicateBatchInfo.reference_code}`);
+                          handleSendMessage();
+                        }}
+                        className="text-[10px] font-bold text-amber-800 underline hover:text-black whitespace-nowrap ml-2"
+                      >
+                        Load Record
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
