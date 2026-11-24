@@ -1,6 +1,7 @@
 import re
 import logging
-from typing import List, Dict, Any, Optional
+from datetime import datetime, date, timedelta, timezone
+from typing import List, Dict, Any, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -28,6 +29,104 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/investigations", tags=["Conversational AI Copilot"])
 
+MONTHS = {
+    'january': 1, 'jan': 1, 'february': 2, 'feb': 2, 'march': 3, 'mar': 3,
+    'april': 4, 'apr': 4, 'may': 5, 'june': 6, 'jun': 6, 'july': 7, 'jul': 7,
+    'august': 8, 'aug': 8, 'september': 9, 'sep': 9, 'sept': 9,
+    'october': 10, 'oct': 10, 'november': 11, 'nov': 11, 'december': 12, 'dec': 12
+}
+
+
+def parse_temporal_criteria(text: str) -> Dict[str, Any]:
+    """Extracts relative and absolute date criteria and sort ordering (first vs last) from natural language."""
+    lower = text.lower()
+    now_utc = datetime.now(timezone.utc)
+    today = now_utc.date()
+
+    target_date = None
+    date_label = None
+
+    # 1. Relative keywords
+    if "today" in lower:
+        target_date = today
+        date_label = "today"
+    elif "yesterday" in lower:
+        target_date = today - timedelta(days=1)
+        date_label = "yesterday"
+    elif "tomorrow" in lower:
+        target_date = today + timedelta(days=1)
+        date_label = "tomorrow"
+    else:
+        # 2. ISO YYYY-MM-DD
+        iso_m = re.search(r'\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b', text)
+        if iso_m:
+            y, m, d = int(iso_m.group(1)), int(iso_m.group(2)), int(iso_m.group(3))
+            try:
+                target_date = date(y, m, d)
+                date_label = str(target_date)
+            except ValueError:
+                pass
+
+        # 3. DD-MM-YYYY or DD/MM/YYYY
+        if not target_date:
+            dmy_m = re.search(r'\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b', text)
+            if dmy_m:
+                d, m, y = int(dmy_m.group(1)), int(dmy_m.group(2)), int(dmy_m.group(3))
+                try:
+                    target_date = date(y, m, d)
+                    date_label = str(target_date)
+                except ValueError:
+                    pass
+
+        # 4. Day Month (e.g. 20 November, 20th Nov 2026)
+        if not target_date:
+            dm_m = re.search(r'\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-zA-Z]+)(?:\s+(\d{4}))?\b', lower)
+            if dm_m and dm_m.group(2) in MONTHS:
+                d = int(dm_m.group(1))
+                m = MONTHS[dm_m.group(2)]
+                y = int(dm_m.group(3)) if dm_m.group(3) else today.year
+                try:
+                    target_date = date(y, m, d)
+                    date_label = f"{d} {dm_m.group(2).title()} {y}"
+                except ValueError:
+                    pass
+
+        # 5. Month Day (e.g. November 20, Nov 20th, 2026)
+        if not target_date:
+            md_m = re.search(r'\b([a-zA-Z]+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{4}))?\b', lower)
+            if md_m and md_m.group(1) in MONTHS:
+                m = MONTHS[md_m.group(1)]
+                d = int(md_m.group(2))
+                y = int(md_m.group(3)) if md_m.group(3) else today.year
+                try:
+                    target_date = date(y, m, d)
+                    date_label = f"{d} {md_m.group(1).title()} {y}"
+                except ValueError:
+                    pass
+
+    # Determine order: 'first' / 'earliest' vs 'last' / 'latest' (default: 'desc')
+    order = "desc"
+    order_label = "latest"
+    if any(w in lower for w in ["first", "earliest", "initial", "oldest", "starting"]):
+        order = "asc"
+        order_label = "first"
+    elif any(w in lower for w in ["last", "latest", "most recent", "newest"]):
+        order = "desc"
+        order_label = "last"
+
+    is_temporal = (target_date is not None) or any(w in lower for w in [
+        "last saved", "latest data", "first data", "most recent", "earliest data",
+        "today's", "todays", "yesterday's", "yesterdays", "tomorrow's", "tomorrows", "from this date"
+    ])
+
+    return {
+        "target_date": target_date,
+        "date_label": date_label,
+        "order": order,
+        "order_label": order_label,
+        "is_temporal": is_temporal,
+    }
+
 
 def is_reset_query(text: str) -> bool:
     """Detects if the user is asking to start a fresh chat or reset the workspace."""
@@ -43,64 +142,108 @@ def is_retrieval_query(text: str) -> bool:
     """Detects if the user wants to lookup or retrieve a previously saved investigation."""
     lower = text.lower()
     triggers = [
-        "retrieve", "find ", "lookup", "look up", "load ", "fetch",
+        "retrieve", "retrive", "find ", "lookup", "look up", "load ", "fetch",
         "search", "what was saved", "get previous", "show saved",
         "open investigation", "find incident", "retrieve incident",
         "pull up", "query ", "previous investigation", "saved investigation",
-        "past deviation", "prior incident", "restore "
+        "past deviation", "prior incident", "restore ", "last saved", "first data",
+        "latest data", "today's", "todays", "yesterday's", "yesterdays", "tomorrow's", "tomorrows", "from this date"
     ]
-    return any(t in lower for t in triggers)
+    if any(t in lower for t in triggers):
+        return True
+    return parse_temporal_criteria(text)["is_temporal"]
 
 
-def search_saved_investigation(user_message: str, current_inv_id: str, db: Session) -> Optional[Investigation]:
-    """Finds a saved investigation in PostgreSQL matching user query parameters."""
-    # 1. Try extracting batch number
-    b_match = re.search(r'(?:batch(?:\s+number)?|lot(?:\s+number)?)\s*(?:is|:|=|\s+for|\s+of)?\s*([A-Za-z0-9_-]+)', user_message, re.IGNORECASE) or \
-              re.search(r'\b(BATCH-[A-Za-z0-9-]+)\b', user_message, re.IGNORECASE)
-    batch_val = b_match.group(1).strip() if b_match else None
-
-    # 2. Try extracting product code
-    c_match = re.search(r'(?:product\s+code|item\s+code|code)\s*(?:is|:|=|\s+for|\s+of)?\s*([A-Za-z0-9_-]+)', user_message, re.IGNORECASE) or \
-              re.search(r'\b([A-Z0-9]+-[A-Z0-9]+-[0-9]+)\b', user_message)
-    code_val = c_match.group(1).strip() if c_match else None
-
-    # 3. Try extracting reference code
-    r_match = re.search(r'\b(RCA-[A-Za-z0-9-]+)\b', user_message, re.IGNORECASE)
-    ref_val = r_match.group(1).strip() if r_match else None
-
-    # 4. Try extracting product name
-    p_match = re.search(r'(?:product(?:\s+name)?|for\s+product|drug\s+product|substance)\s*(?:is|:|=|\s+for|\s+of)?\s*([A-Za-z0-9-]+)', user_message, re.IGNORECASE)
-    prod_val = p_match.group(1).strip() if p_match else None
-
-    # 5. Entity after "for", "about", "investigation"
-    gen_match = re.search(r'(?:for|about|record|investigation)\s+([A-Za-z0-9_-]+)', user_message, re.IGNORECASE)
-    gen_val = gen_match.group(1).strip() if gen_match else None
+def search_saved_investigation(user_message: str, current_inv_id: str, db: Session) -> Tuple[Optional[Investigation], Optional[str]]:
+    """Finds a saved investigation in PostgreSQL matching user query parameters or time criteria."""
+    temporal = parse_temporal_criteria(user_message)
 
     base_query = db.query(Investigation).filter(
         (Investigation.product_name.isnot(None)) | (Investigation.batch_number.isnot(None))
     )
 
-    if batch_val and batch_val.lower() not in ['number', 'is', 'the', 'for', 'a', 'to']:
+    # 1. Temporal search with specific target_date
+    if temporal["target_date"]:
+        t_date = temporal["target_date"]
+        start_tz = datetime.combine(t_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+        end_tz = datetime.combine(t_date, datetime.max.time()).replace(tzinfo=timezone.utc)
+        date_filter = (
+            ((Investigation.updated_at >= start_tz) & (Investigation.updated_at <= end_tz)) |
+            ((Investigation.created_at >= start_tz) & (Investigation.created_at <= end_tz)) |
+            ((Investigation.incident_at >= start_tz) & (Investigation.incident_at <= end_tz))
+        )
+        t_query = base_query.filter(date_filter)
+
+        # Check if an entity keyword is also in the query
+        b_m = re.search(r'\b(BATCH-[A-Za-z0-9-]+)\b', user_message, re.IGNORECASE)
+        if b_m:
+            t_query = t_query.filter(Investigation.batch_number.ilike(f"%{b_m.group(1)}%"))
+
+        p_m = re.search(r'(?:product(?:\s+name)?|for\s+product)\s*([A-Za-z0-9-]+)', user_message, re.IGNORECASE)
+        if p_m and p_m.group(1).lower() not in ['name', 'product', 'is', 'the', 'for', 'data', 'this', 'last', 'first']:
+            t_query = t_query.filter(Investigation.product_name.ilike(f"%{p_m.group(1)}%"))
+
+        if temporal["order"] == "asc":
+            match = t_query.order_by(Investigation.updated_at.asc()).first()
+        else:
+            match = t_query.order_by(Investigation.updated_at.desc()).first()
+
+        desc = f"{temporal['date_label']}'s {temporal['order_label']} saved investigation"
+        return match, desc
+
+    # 2. Temporal search without specific date (e.g. "retrieve the latest saved data" or "earliest data")
+    if temporal["is_temporal"]:
+        if temporal["order"] == "asc":
+            match = base_query.order_by(Investigation.updated_at.asc()).first()
+        else:
+            match = base_query.order_by(Investigation.updated_at.desc()).first()
+        desc = f"the {temporal['order_label']} saved investigation"
+        if match:
+            return match, desc
+
+    # 3. Entity search: Try extracting batch number
+    b_match = re.search(r'(?:batch(?:\s+number)?|lot(?:\s+number)?)\s*(?:is|:|=|\s+for|\s+of)?\s*([A-Za-z0-9_-]+)', user_message, re.IGNORECASE) or \
+              re.search(r'\b(BATCH-[A-Za-z0-9-]+)\b', user_message, re.IGNORECASE)
+    batch_val = b_match.group(1).strip() if b_match else None
+
+    # Try extracting product code
+    c_match = re.search(r'(?:product\s+code|item\s+code|code)\s*(?:is|:|=|\s+for|\s+of)?\s*([A-Za-z0-9_-]+)', user_message, re.IGNORECASE) or \
+              re.search(r'\b([A-Z0-9]+-[A-Z0-9]+-[0-9]+)\b', user_message)
+    code_val = c_match.group(1).strip() if c_match else None
+
+    # Try extracting reference code
+    r_match = re.search(r'\b(RCA-[A-Za-z0-9-]+)\b', user_message, re.IGNORECASE)
+    ref_val = r_match.group(1).strip() if r_match else None
+
+    # Try extracting product name
+    p_match = re.search(r'(?:product(?:\s+name)?|for\s+product|drug\s+product|substance)\s*(?:is|:|=|\s+for|\s+of)?\s*([A-Za-z0-9-]+)', user_message, re.IGNORECASE)
+    prod_val = p_match.group(1).strip() if p_match else None
+
+    # Entity after "for", "about", "investigation"
+    gen_match = re.search(r'(?:for|about|record|investigation)\s+([A-Za-z0-9_-]+)', user_message, re.IGNORECASE)
+    gen_val = gen_match.group(1).strip() if gen_match else None
+
+    if batch_val and batch_val.lower() not in ['number', 'is', 'the', 'for', 'a', 'to', 'data']:
         match = base_query.filter(Investigation.batch_number.ilike(f"%{batch_val}%")).order_by(Investigation.updated_at.desc()).first()
         if match:
-            return match
+            return match, f"investigation for batch {match.batch_number}"
 
     if ref_val:
         match = base_query.filter(Investigation.reference_code.ilike(f"%{ref_val}%")).order_by(Investigation.updated_at.desc()).first()
         if match:
-            return match
+            return match, f"investigation {match.reference_code}"
 
-    if code_val and code_val.lower() not in ['code', 'is', 'the', 'for', 'a']:
+    if code_val and code_val.lower() not in ['code', 'is', 'the', 'for', 'a', 'data']:
         match = base_query.filter(Investigation.product_code.ilike(f"%{code_val}%")).order_by(Investigation.updated_at.desc()).first()
         if match:
-            return match
+            return match, f"investigation for product code {match.product_code}"
 
-    if prod_val and prod_val.lower() not in ['name', 'product', 'is', 'the', 'for', 'deviation', 'stage']:
+    if prod_val and prod_val.lower() not in ['name', 'product', 'is', 'the', 'for', 'deviation', 'stage', 'data']:
         match = base_query.filter(Investigation.product_name.ilike(f"%{prod_val}%")).order_by(Investigation.updated_at.desc()).first()
         if match:
-            return match
+            return match, f"investigation for product {match.product_name}"
 
-    if gen_val and gen_val.lower() not in ['the', 'this', 'that', 'saved', 'previous', 'an', 'a', 'it', 'me', 'batch', 'product']:
+    if gen_val and gen_val.lower() not in ['the', 'this', 'that', 'saved', 'previous', 'an', 'a', 'it', 'me', 'batch', 'product', 'data']:
         match = base_query.filter(
             (Investigation.batch_number.ilike(f"%{gen_val}%")) |
             (Investigation.product_name.ilike(f"%{gen_val}%")) |
@@ -108,11 +251,11 @@ def search_saved_investigation(user_message: str, current_inv_id: str, db: Sessi
             (Investigation.equipment_id.ilike(f"%{gen_val}%"))
         ).order_by(Investigation.updated_at.desc()).first()
         if match:
-            return match
+            return match, f"investigation matching '{gen_val}'"
 
     # Search each candidate token >= 4 chars
     tokens = [t for t in re.findall(r'[A-Za-z0-9_-]+', user_message) if len(t) >= 4 and t.lower() not in [
-        'retrieve', 'information', 'saved', 'before', 'product', 'batch', 'investigation', 'incident', 'which', 'about', 'from', 'other', 'something'
+        'retrieve', 'information', 'saved', 'before', 'product', 'batch', 'investigation', 'incident', 'which', 'about', 'from', 'other', 'something', 'data', 'today', 'yesterday', 'tomorrow'
     ]]
     for t in tokens:
         match = base_query.filter(
@@ -121,9 +264,9 @@ def search_saved_investigation(user_message: str, current_inv_id: str, db: Sessi
             (Investigation.product_code.ilike(f"%{t}%"))
         ).order_by(Investigation.updated_at.desc()).first()
         if match:
-            return match
+            return match, f"investigation matching '{t}'"
 
-    return None
+    return None, None
 
 
 @router.post(
@@ -168,7 +311,7 @@ async def chat_with_copilot(
 
     # 1. Check if user is asking to retrieve a previously saved investigation
     if is_retrieval_query(payload.message):
-        match = search_saved_investigation(payload.message, investigation_id, db)
+        match, desc = search_saved_investigation(payload.message, investigation_id, db)
         if match:
             retrieved_fields = {
                 "product_name": match.product_name or "",
@@ -248,11 +391,19 @@ async def chat_with_copilot(
                 for g in m_gaps
             ]
 
-            asst_msg = (
-                f"I found the previously saved investigation {match.reference_code} for product '{match.product_name}' "
-                f"(Batch: {match.batch_number}). I have retrieved all parameters into the live form and restored "
-                f"the 5 Whys causal analysis and CAPA recommendations. You can now update or change any fields directly."
-            )
+            if desc:
+                asst_msg = (
+                    f"I retrieved {desc} ({match.reference_code}) for product '{match.product_name}' "
+                    f"(Batch: {match.batch_number}). All parameters have been populated into the live form and the "
+                    f"5 Whys causal analysis and CAPA recommendations are restored. You can now update or change any fields directly."
+                )
+            else:
+                asst_msg = (
+                    f"I found the previously saved investigation {match.reference_code} for product '{match.product_name}' "
+                    f"(Batch: {match.batch_number}). I have retrieved all parameters into the live form and restored "
+                    f"the 5 Whys causal analysis and CAPA recommendations. You can now update or change any fields directly."
+                )
+
             return CopilotChatResponse(
                 assistant_message=asst_msg,
                 reply=asst_msg,
@@ -272,10 +423,18 @@ async def chat_with_copilot(
                 investigation_status=match.status,
             )
         else:
-            asst_msg = (
-                f"I searched the database for an investigation matching your query, but no matching saved record was found. "
-                f"You can provide incident parameters in the chat to start a new investigation."
-            )
+            temp_crit = parse_temporal_criteria(payload.message)
+            if temp_crit.get("target_date"):
+                date_str = temp_crit["target_date"].strftime("%Y-%m-%d")
+                asst_msg = (
+                    f"I searched the database for an investigation from {date_str}, but no matching saved record was found. "
+                    f"You can provide incident parameters in the chat or specify another date or batch number."
+                )
+            else:
+                asst_msg = (
+                    f"I searched the database for an investigation matching your query, but no matching saved record was found. "
+                    f"You can provide incident parameters in the chat to start a new investigation."
+                )
             return CopilotChatResponse(
                 assistant_message=asst_msg,
                 reply=asst_msg,

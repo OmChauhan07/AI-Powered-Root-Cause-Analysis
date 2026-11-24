@@ -283,3 +283,121 @@ def test_copilot_reset_session(client, test_db):
     assert data["field_updates"]["product_name"] == ""
     assert data["field_updates"]["batch_number"] == ""
     assert "reset" in data["reply"].lower()
+
+
+def test_copilot_retrieve_today_last_saved_data(client, test_db):
+    """Asking for today's last saved data retrieves the latest record updated today."""
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+    earlier = now - timedelta(hours=2)
+
+    inv1 = Investigation(
+        id="inv-today-early",
+        reference_code="RCA-TODAY-01",
+        title="Earlier Today",
+        product_name="Product Early",
+        batch_number="BATCH-EARLY",
+        created_at=earlier,
+        updated_at=earlier,
+    )
+    inv2 = Investigation(
+        id="inv-today-late",
+        reference_code="RCA-TODAY-02",
+        title="Later Today",
+        product_name="Product Late",
+        batch_number="BATCH-LATE",
+        created_at=now,
+        updated_at=now,
+    )
+    test_db.add_all([inv1, inv2])
+    test_db.commit()
+
+    payload = {
+        "message": "can you retrieve today's last saved data",
+        "conversation_history": [],
+    }
+    resp = client.post("/api/investigations/inv-new/copilot/chat", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["intent"] == "retrieve_investigation"
+    assert data["is_existing_record"] is True
+    assert data["retrieved_investigation_id"] == "inv-today-late"
+    assert data["field_updates"]["batch_number"] == "BATCH-LATE"
+    assert "Product Late" in data["reply"]
+
+
+def test_copilot_retrieve_today_first_saved_data(client, test_db):
+    """Asking for today's first data retrieves the earliest record updated today."""
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+    earlier = now - timedelta(hours=3)
+
+    inv1 = Investigation(
+        id="inv-today-first",
+        reference_code="RCA-FIRST-01",
+        title="First Today",
+        product_name="Product First",
+        batch_number="BATCH-FIRST",
+        created_at=earlier,
+        updated_at=earlier,
+    )
+    inv2 = Investigation(
+        id="inv-today-second",
+        reference_code="RCA-SECOND-02",
+        title="Second Today",
+        product_name="Product Second",
+        batch_number="BATCH-SECOND",
+        created_at=now,
+        updated_at=now,
+    )
+    test_db.add_all([inv1, inv2])
+    test_db.commit()
+
+    payload = {
+        "message": "please retrieve today's first data",
+        "conversation_history": [],
+    }
+    resp = client.post("/api/investigations/inv-fresh/copilot/chat", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["intent"] == "retrieve_investigation"
+    assert data["is_existing_record"] is True
+    assert data["retrieved_investigation_id"] == "inv-today-first"
+    assert data["field_updates"]["batch_number"] == "BATCH-FIRST"
+
+
+def test_copilot_retrieve_specific_date(client, test_db):
+    """Asking for data from a specific date retrieves the record from that calendar date."""
+    from datetime import datetime, timezone
+
+    target_dt = datetime(2026, 11, 20, 14, 30, tzinfo=timezone.utc)
+    inv_date = Investigation(
+        id="inv-dated-20",
+        reference_code="RCA-2026-1120",
+        title="November 20 Deviation",
+        product_name="Paracetamol Granules",
+        batch_number="BATCH-2026-1120-X",
+        created_at=target_dt,
+        updated_at=target_dt,
+    )
+    test_db.add(inv_date)
+    test_db.commit()
+
+    payload = {
+        "message": "can you retrieve data from 2026-11-20?",
+        "conversation_history": [],
+    }
+    resp = client.post("/api/investigations/inv-query/copilot/chat", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["intent"] == "retrieve_investigation"
+    assert data["is_existing_record"] is True
+    assert data["retrieved_investigation_id"] == "inv-dated-20"
+    assert data["field_updates"]["product_name"] == "Paracetamol Granules"
+    assert data["field_updates"]["batch_number"] == "BATCH-2026-1120-X"
+
