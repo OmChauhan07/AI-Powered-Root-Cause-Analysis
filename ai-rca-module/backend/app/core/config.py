@@ -14,7 +14,12 @@ class Settings(BaseSettings):
     )
 
     # Project metadata
-    PROJECT_NAME: str = "AIVOA.AI - Root Cause Analysis (RCA) Module"
+    PROJECT_NAME: str = "AI RCA Module"
+    PROJECT_TITLE: str = "AI-Powered Root Cause Analysis"
+    PROJECT_DESCRIPTION: str = (
+        "AI-assisted pharmaceutical quality investigation, root cause analysis, "
+        "and CAPA management."
+    )
     VERSION: str = "0.1.0"
     ENVIRONMENT: str = "development"
     DEBUG: bool = True

@@ -34,4 +34,122 @@ export const getHealthStatus = async () => {
   return response.data;
 };
 
+/**
+ * Upload PDF or EML evidence file
+ * Calls POST /api/investigations/{investigationId}/documents/upload
+ */
+export const uploadEvidenceDocument = async (investigationId, file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiClient.post(
+    `/api/investigations/${investigationId}/documents/upload`,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+  return response.data;
+};
+
+/**
+ * Submit Pasted Incident Narrative
+ * Calls POST /api/investigations/{investigationId}/documents/text
+ */
+export const submitPastedNarrative = async (investigationId, content, title) => {
+  const response = await apiClient.post(
+    `/api/investigations/${investigationId}/documents/text`,
+    { content, title }
+  );
+  return response.data;
+};
+
+/**
+ * Submit Email Record
+ * Calls POST /api/investigations/{investigationId}/documents/email
+ */
+export const submitEmailRecord = async (investigationId, emailData) => {
+  const response = await apiClient.post(
+    `/api/investigations/${investigationId}/documents/email`,
+    emailData
+  );
+  return response.data;
+};
+
+/**
+ * Retrieve list of source documents
+ * Calls GET /api/investigations/{investigationId}/documents
+ */
+export const fetchSourceDocuments = async (investigationId) => {
+  const response = await apiClient.get(`/api/investigations/${investigationId}/documents`);
+  return response.data;
+};
+
+/**
+ * Trigger LangGraph + Groq AI extraction on attached evidence documents
+ * Calls POST /api/investigations/{investigationId}/extract
+ */
+export const triggerAiExtraction = async (investigationId, sourceDocumentIds = null, overwriteUserEdits = false) => {
+  const response = await apiClient.post(`/api/investigations/${investigationId}/extract`, {
+    source_document_ids: sourceDocumentIds,
+    overwrite_user_edits: overwriteUserEdits,
+  });
+  return response.data;
+};
+
+/**
+ * Retrieve granular extracted facts with citation provenance
+ * Calls GET /api/investigations/{investigationId}/facts
+ */
+export const fetchExtractedFacts = async (investigationId) => {
+  const response = await apiClient.get(`/api/investigations/${investigationId}/facts`);
+  return response.data;
+};
+
+/**
+ * Review an individual extracted fact (Human-in-the-Loop)
+ * Calls PATCH /api/investigations/{investigationId}/facts/{factId}
+ */
+export const reviewExtractedFact = async (investigationId, factId, reviewStatus, reviewerNote = null) => {
+  const response = await apiClient.patch(
+    `/api/investigations/${investigationId}/facts/${factId}`,
+    null,
+    {
+      params: {
+        review_status: reviewStatus,
+        reviewer_note: reviewerNote,
+      },
+    }
+  );
+  return response.data;
+};
+
+/**
+ * Trigger Evidence & Gap Analysis across all attached documents
+ * Calls POST /api/investigations/{investigationId}/evidence/analyze
+ */
+export const triggerEvidenceAnalysis = async (investigationId) => {
+  const response = await apiClient.post(`/api/investigations/${investigationId}/evidence/analyze`);
+  return response.data;
+};
+
+/**
+ * Fetch stored evidence records, gaps, and timeline anomalies
+ * Calls GET /api/investigations/{investigationId}/evidence
+ */
+export const fetchInvestigationEvidence = async (investigationId) => {
+  const response = await apiClient.get(`/api/investigations/${investigationId}/evidence`);
+  return response.data;
+};
+
+/**
+ * Resolve an investigation gap
+ * Calls PATCH /api/investigations/{investigationId}/gaps/{gapId}/resolve
+ */
+export const resolveInvestigationGap = async (investigationId, gapId) => {
+  const response = await apiClient.patch(`/api/investigations/${investigationId}/gaps/${gapId}/resolve`);
+  return response.data;
+};
+
 export default apiClient;
