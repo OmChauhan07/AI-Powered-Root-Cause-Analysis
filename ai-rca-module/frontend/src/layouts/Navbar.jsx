@@ -1,6 +1,6 @@
 import React from 'react';
 
-export const Navbar = () => {
+export const Navbar = ({ onSwitchToCopilot }) => {
   return (
     <header style={navStyles.header}>
       <div style={navStyles.container}>
@@ -12,6 +12,15 @@ export const Navbar = () => {
           </div>
         </div>
         <nav style={navStyles.nav}>
+          {onSwitchToCopilot && (
+            <button
+              onClick={onSwitchToCopilot}
+              style={navStyles.copilotBtn}
+              title="Switch to Stitch Copilot Split View"
+            >
+              ⚡ AIVOA Copilot View
+            </button>
+          )}
           <span style={navStyles.badge}>v0.1.0-alpha</span>
           <a
             href="http://localhost:8000/docs"
@@ -79,6 +88,17 @@ const navStyles = {
     borderRadius: '9999px',
     fontSize: '0.72rem',
     fontWeight: '600',
+  },
+  copilotBtn: {
+    backgroundColor: '#ffffff',
+    color: '#000000',
+    border: '1px solid #ffffff',
+    padding: '5px 12px',
+    borderRadius: '6px',
+    fontSize: '0.8rem',
+    fontWeight: '700',
+    cursor: 'pointer',
+    transition: 'opacity 0.15s ease',
   },
   link: {
     color: '#94a3b8',

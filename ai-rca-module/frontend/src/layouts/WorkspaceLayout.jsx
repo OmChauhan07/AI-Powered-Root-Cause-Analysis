@@ -11,7 +11,7 @@ import SummaryStage from '../pages/stages/SummaryStage';
 import HealthCard from '../components/HealthCard';
 import { useHealth } from '../hooks/useHealth';
 
-export const WorkspaceLayout = () => {
+export const WorkspaceLayout = ({ onSwitchToCopilot }) => {
   const activeStage = useSelector((state) => state.investigation.activeStage);
   const { healthData, isLoading, isError, error, refetch, lastChecked } = useHealth(true);
 
@@ -36,7 +36,7 @@ export const WorkspaceLayout = () => {
 
   return (
     <div style={layoutStyles.container}>
-      <Navbar />
+      <Navbar onSwitchToCopilot={onSwitchToCopilot} />
       <StageNav />
 
       <main style={layoutStyles.mainContent}>
