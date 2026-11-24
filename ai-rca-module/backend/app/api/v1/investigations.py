@@ -329,6 +329,44 @@ async def save_reviewed_investigation(
 
 
 @router.get(
+    "/search",
+    summary="Search Saved Investigations",
+    description="Search database for previously saved investigations by batch number, product name, product code, or reference code.",
+)
+async def search_investigations(
+    q: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Searches PostgreSQL for saved investigations matching search terms."""
+    query = db.query(Investigation).filter(
+        (Investigation.product_name.isnot(None)) | (Investigation.batch_number.isnot(None))
+    )
+    if q and q.strip():
+        term = q.strip()
+        query = query.filter(
+            (Investigation.batch_number.ilike(f"%{term}%"))
+            | (Investigation.product_name.ilike(f"%{term}%"))
+            | (Investigation.product_code.ilike(f"%{term}%"))
+            | (Investigation.reference_code.ilike(f"%{term}%"))
+            | (Investigation.equipment_id.ilike(f"%{term}%"))
+        )
+    investigations = query.order_by(Investigation.updated_at.desc()).limit(20).all()
+    return [
+        {
+            "id": inv.id,
+            "reference_code": inv.reference_code,
+            "title": inv.title,
+            "product_name": inv.product_name,
+            "product_code": inv.product_code,
+            "batch_number": inv.batch_number,
+            "status": inv.status,
+            "updated_at": inv.updated_at.isoformat() if inv.updated_at else None,
+        }
+        for inv in investigations
+    ]
+
+
+@router.get(
     "/{investigation_id}",
     response_model=InvestigationDossierResponse,
     summary="Retrieve Complete Investigation Dossier",

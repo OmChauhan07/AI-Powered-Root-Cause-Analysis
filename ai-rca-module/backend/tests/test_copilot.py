@@ -203,3 +203,83 @@ def test_copilot_request_summary(client, test_db):
 
     assert "reply" in data
     assert "BATCH-2026-014" in data["reply"] or "API-X" in data["reply"]
+
+
+def test_copilot_retrieve_saved_investigation_by_batch(client, test_db):
+    """Asking to retrieve a previously saved investigation by batch number populates form and returns existing record."""
+    saved_inv = Investigation(
+        id="inv-saved-101",
+        reference_code="RCA-2026-101",
+        title="Paracetamol Purity Deviation",
+        product_name="Paracetamol",
+        product_code="PERA-RAW-092",
+        batch_number="BATCH-523-02",
+        manufacturing_stage="Crystallization",
+        equipment_id="CRYST-REACTOR-02",
+        observed_result="98.1%",
+        expected_result=">= 99.0%",
+        status="reviewed",
+    )
+    test_db.add(saved_inv)
+    test_db.commit()
+
+    payload = {
+        "message": "Retrieve investigation for batch BATCH-523-02",
+        "conversation_history": [],
+    }
+    resp = client.post("/api/investigations/inv-fresh-session/copilot/chat", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["intent"] == "retrieve_investigation"
+    assert data["is_existing_record"] is True
+    assert data["retrieved_investigation_id"] == "inv-saved-101"
+    assert data["reference_code"] == "RCA-2026-101"
+    assert data["field_updates"]["product_name"] == "Paracetamol"
+    assert data["field_updates"]["batch_number"] == "BATCH-523-02"
+    assert "BATCH-523-02" in data["reply"]
+
+
+def test_copilot_retrieve_saved_investigation_by_product(client, test_db):
+    """Asking to retrieve an investigation by product name populates all saved fields."""
+    saved_inv = Investigation(
+        id="inv-saved-102",
+        reference_code="RCA-2026-102",
+        title="API-X Synthesis Deviation",
+        product_name="API-X",
+        product_code="APIX-RAW-99",
+        batch_number="BATCH-2026-014",
+        status="confirmed",
+    )
+    test_db.add(saved_inv)
+    test_db.commit()
+
+    payload = {
+        "message": "Find saved investigation for product API-X",
+        "conversation_history": [],
+    }
+    resp = client.post("/api/investigations/inv-new-chat/copilot/chat", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["intent"] == "retrieve_investigation"
+    assert data["is_existing_record"] is True
+    assert data["field_updates"]["product_name"] == "API-X"
+    assert data["field_updates"]["batch_number"] == "BATCH-2026-014"
+
+
+def test_copilot_reset_session(client, test_db):
+    """Asking to start a new chat resets the live form and sets is_existing_record to False."""
+    payload = {
+        "message": "start a new chat",
+        "conversation_history": [],
+    }
+    resp = client.post("/api/investigations/inv-any/copilot/chat", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["intent"] == "reset_session"
+    assert data["is_existing_record"] is False
+    assert data["field_updates"]["product_name"] == ""
+    assert data["field_updates"]["batch_number"] == ""
+    assert "reset" in data["reply"].lower()

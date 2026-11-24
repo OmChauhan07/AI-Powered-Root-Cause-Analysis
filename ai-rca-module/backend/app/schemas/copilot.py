@@ -39,6 +39,8 @@ class CopilotChatResponse(BaseModel):
         "suggest_capa",
         "summary_query",
         "clarification",
+        "retrieve_investigation",
+        "reset_session",
     ] = Field(default="general_question", description="Classified intent of the user message")
     action_status: Literal["success", "no_action", "clarification_needed", "error"] = Field(
         default="success",
@@ -57,5 +59,8 @@ class CopilotChatResponse(BaseModel):
     investigation_gaps: List[Dict[str, Any]] = Field(default_factory=list)
     missing_gaps: Optional[List[Dict[str, Any]]] = Field(default=None, description="Alias for investigation_gaps")
     investigation_status: str = Field(default="draft", description="Current lifecycle status of the investigation")
+    retrieved_investigation_id: Optional[str] = Field(default=None, description="ID of retrieved existing investigation")
+    reference_code: Optional[str] = Field(default=None, description="Reference code of the investigation (e.g. RCA-2026-001)")
+    is_existing_record: bool = Field(default=False, description="Whether this investigation exists in PostgreSQL database")
 
     model_config = ConfigDict(from_attributes=True)
