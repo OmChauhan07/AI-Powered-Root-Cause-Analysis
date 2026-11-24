@@ -6,6 +6,7 @@ from app.api.v1.evidence import router as evidence_router
 from app.api.v1.rca_methods import router as rca_methods_router
 from app.api.v1.assessment import router as assessment_router
 from app.api.v1.capa import router as capa_router
+from app.api.v1.copilot import router as copilot_router
 
 api_router = APIRouter()
 
@@ -29,6 +30,10 @@ api_router.include_router(assessment_router)
 
 # Mount CAPA Recommendations endpoints: accessible under /api/investigations/...
 api_router.include_router(capa_router)
+
+# Mount Conversational Copilot endpoints: accessible under /api/investigations/...
+api_router.include_router(copilot_router)
+
 
 
 
