@@ -168,8 +168,8 @@ class CauseCandidate(Base):
     ai_status = Column(String(50), default="hypothesis", nullable=False)  # 'hypothesis', 'needs_evidence', 'evidence_supported_pending_review', 'not_supported'
     review_status = Column(String(50), default="pending", nullable=False)  # 'pending', 'confirmed', 'rejected', 'edited'
     reviewer_note = Column(Text, nullable=True)
-    supporting_evidence_ids = Column(JSON, nullable=True)
-    contradicting_evidence_ids = Column(JSON, nullable=True)
+    supporting_evidence_ids = Column(JSON, default=list, nullable=True)
+    contradicting_evidence_ids = Column(JSON, default=list, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 

@@ -213,6 +213,14 @@ async def update_cause_candidate(
             detail=f"Cause candidate '{cause_id}' not found for investigation '{investigation_id}'.",
         )
 
+    # GxP compliance check: require a reviewer note or basis when confirming or rejecting
+    if payload.review_status in ["confirmed", "rejected"]:
+        if not payload.reviewer_note or not payload.reviewer_note.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"A reviewer justification note is required to set cause status to '{payload.review_status}'.",
+            )
+
     candidate.review_status = payload.review_status
     if payload.reviewer_note is not None:
         candidate.reviewer_note = payload.reviewer_note

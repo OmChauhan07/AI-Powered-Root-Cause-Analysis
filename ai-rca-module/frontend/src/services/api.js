@@ -185,4 +185,22 @@ export const updateCauseStatus = async (investigationId, causeId, reviewStatus, 
   return response.data;
 };
 
+/**
+ * Trigger Cause Candidates & Evidence Assessment Matrix
+ * Calls POST /api/investigations/{investigationId}/assessment/evaluate
+ */
+export const triggerCauseAssessment = async (investigationId) => {
+  const response = await apiClient.post(`/api/investigations/${investigationId}/assessment/evaluate`);
+  return response.data;
+};
+
+/**
+ * Fetch Cause Candidates & Evidence Assessment Matrix
+ * Calls GET /api/investigations/{investigationId}/assessment/matrix
+ */
+export const fetchCauseAssessmentMatrix = async (investigationId) => {
+  const response = await apiClient.get(`/api/investigations/${investigationId}/assessment/matrix`);
+  return response.data;
+};
+
 export default apiClient;

@@ -27,12 +27,16 @@ class RCAState(TypedDict, total=False):
     # Phase 05 & 06: Evidence & Method Analysis
     extracted_anomalies: List[str]
     evidence_records: List[Dict[str, Any]]
+    investigation_gaps: List[Dict[str, Any]]
     investigation_method: Optional[Literal["five_whys", "fishbone"]]
     five_whys_chains: List[Dict[str, Any]]
     fishbone_categories: Dict[str, Any]
     hypotheses: List[str]
     cause_candidates: List[Dict[str, Any]]
     cause_evidence_links: List[Dict[str, Any]]
+    matrix: List[Dict[str, Any]]
+    cause_evidence_matrix: List[Dict[str, Any]]
+    unresolved_gaps_count: int
     root_cause: Optional[str]
     confidence_score: Optional[float]
 

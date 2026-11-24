@@ -51,6 +51,7 @@ const initialState = {
     environment: [],
   },
   causeCandidates: [],
+  causeEvidenceMatrix: [],
   capaRecommendations: [],
   isAnalyzing: false,
   error: null,
@@ -143,6 +144,9 @@ export const investigationSlice = createSlice({
     },
     setCauseCandidates: (state, action) => {
       state.causeCandidates = action.payload;
+    },
+    setCauseEvidenceMatrix: (state, action) => {
+      state.causeEvidenceMatrix = action.payload;
     },
     updateFishboneCategory: (state, action) => {
       const { category, items } = action.payload;
@@ -333,6 +337,7 @@ export const {
   updateFiveWhysChain,
   setFishboneCategories,
   setCauseCandidates,
+  setCauseEvidenceMatrix,
   updateFishboneCategory,
   updateCauseCandidateStatus,
   updateCapaActionStatus,

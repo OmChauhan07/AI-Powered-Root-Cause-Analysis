@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 class FiveWhysStep(BaseModel):
@@ -61,8 +61,15 @@ class CauseCandidateItem(BaseModel):
         description="Human reviewer status: 'pending', 'confirmed', 'rejected', 'edited'",
     )
     reviewer_note: Optional[str] = Field(None, description="Notes written by qualified QA investigator")
-    supporting_evidence_ids: List[str] = Field(default_factory=list, description="UUIDs of supporting evidence")
-    contradicting_evidence_ids: List[str] = Field(default_factory=list, description="UUIDs of contradicting evidence")
+    supporting_evidence_ids: Optional[List[str]] = Field(default_factory=list, description="UUIDs of supporting evidence")
+    contradicting_evidence_ids: Optional[List[str]] = Field(default_factory=list, description="UUIDs of contradicting evidence")
+
+    @field_validator("supporting_evidence_ids", "contradicting_evidence_ids", mode="before")
+    @classmethod
+    def coerce_none_to_list(cls, v):
+        if v is None:
+            return []
+        return v
 
     model_config = ConfigDict(from_attributes=True)
 

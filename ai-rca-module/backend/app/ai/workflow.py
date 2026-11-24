@@ -13,6 +13,7 @@ from app.ai.nodes import (
     extract_incident_fields_node,
     analyze_evidence_and_gaps_node,
     rca_investigation_methods_node,
+    assess_cause_evidence_matrix_node,
     log_analyzer_node,
     hypothesis_generator_node,
     root_cause_identifier_node,
@@ -61,6 +62,20 @@ def build_rca_methods_graph():
 
     compiled = builder.compile()
     logger.info("LangGraph RCA Methods workflow compiled successfully.")
+    return compiled
+
+
+def build_cause_assessment_graph():
+    """Builds and compiles the Cause/Evidence Assessment Matrix LangGraph workflow."""
+    builder = StateGraph(RCAState)
+
+    builder.add_node("assess_cause_evidence_matrix", assess_cause_evidence_matrix_node)
+
+    builder.add_edge(START, "assess_cause_evidence_matrix")
+    builder.add_edge("assess_cause_evidence_matrix", END)
+
+    compiled = builder.compile()
+    logger.info("LangGraph Cause/Evidence Assessment workflow compiled successfully.")
     return compiled
 
 
