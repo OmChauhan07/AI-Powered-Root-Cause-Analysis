@@ -1,192 +1,185 @@
-# AI-Powered Root Cause Analysis (RCA) Module
+# AI RCA Module — AI-Powered Root Cause Analysis
 
-> **GxP-Compliant AI-Assisted Deviation Investigation, Root Cause Analysis, and CAPA Management for Pharmaceutical Manufacturing**
+> **AI-assisted pharmaceutical quality investigation, root cause analysis, and CAPA recommendations.**
 
-An intelligent, full-stack investigation platform designed specifically for pharmaceutical quality assurance (QA) and regulatory compliance teams. The application guides investigators through Active Pharmaceutical Ingredient (API) deviations (such as out-of-specification purity assays), orchestrates multi-source document ingestion, executes agentic reasoning via **LangGraph** and **Groq (`llama-3.3-70b-versatile`)**, detects timeline anomalies and evidence conflicts, maps causal chains using **5 Whys** and **Ishikawa 6M Fishbone**, cross-references supporting versus contradicting evidence, and formulates measurable **CAPA action plans**—while strictly enforcing human authority boundaries per FDA 21 CFR Part 11.
+The **AI RCA Module** is an AI-first, single-page investigation workspace designed specifically for pharmaceutical quality assurance (QA), manufacturing deviation triage, and regulatory compliance teams. 
+
+The application implements a split-screen desktop workspace featuring a live, AI-populated investigation form on the left (~60%) and an interactive conversational AI Copilot on the right (~40%). Users interact naturally with the Copilot to upload incident documents (PDF/TXT), provide narrative updates, execute 5 Whys root cause analysis, identify evidence gaps, formulate evidence-linked CAPA commitments, and formally sign off on the investigation dossier via a GxP Review Modal before persisting to PostgreSQL.
 
 ---
 
 ## 🏗️ Architecture & Technology Stack
 
 ```
-                              ┌───────────────────────────────────────────────┐
-                              │            React 19 + Vite Frontend           │
-                              │  Redux Toolkit • Axios • Human Review Gates   │
-                              └───────────────────────┬───────────────────────┘
-                                                      │ REST APIs
-                                                      ▼
-                              ┌───────────────────────────────────────────────┐
-                              │            FastAPI Backend (Py 3.12)          │
-                              │  Modular Routers • Pydantic v2 • Audit Trails │
-                              └───────┬───────────────────────────────┬───────┘
-                                      │                               │
-                                      ▼                               ▼
-     ┌──────────────────────────────────────────────────┐   ┌───────────────────────────┐
-     │          LangGraph Agentic Orchestrator          │   │   PostgreSQL + SQLAlchemy │
-     │  • Multi-Format Document Parser (PyMuPDF)        │   │  • Alembic Migrations     │
-     │  • Fact Extraction & Citation Provenance         │   │  • Investigation Dossiers │
-     │  • Cross-Document Gap & Conflict Detector        │   │  • Evidence Records       │
-     │  • 5 Whys & Ishikawa 6M Methods                  │   │  • Cause Candidates       │
-     │  • Supporting vs Contradicting Evidence Matrix   │   │  • CAPA Action Plans      │
-     │  • Role-Based CAPA Formulation                   │   └───────────────────────────┘
-     │  • Groq LLM (llama-3.3-70b) + GxP Offline Fallback│
-     └──────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                       AI RCA Module Workspace                                   │
+├────────────────────────────────────────────────────────┬────────────────────────────────────────┤
+│           Left Section (60% Desktop Width)             │    Right Section (40% Desktop Width)   │
+│           Live RCA Investigation Form                  │    Conversational AI Copilot           │
+│                                                        │                                        │
+│ • Display-first, AI-populated parameters               │ • Natural language chat (LLM style)   │
+│ • Real-time field status badges (Extracted/Modified)   │ • Intent understanding & extraction    │
+│ • Monospace problem statement & deviation limits       │ • Real-time live form synchronization  │
+│ • Attached evidence pills with page counts             │ • Interactive 5 Whys causal path card  │
+│ • Real-time status cards (5 Whys / CAPA / Evidence)    │ • Evidence-linked CAPA recommendation  │
+│ • Direct "Commit Incident & Run 5 Whys" button         │ • Missing evidence & gap detection     │
+│ • "Open Final Review Modal" sign-off gate              │ • Attachment dock (.pdf, .txt, .eml)   │
+└───────────────────────────┬────────────────────────────┴───────────────────┬────────────────────┘
+                            │                                                │
+                            │              HTTP / REST APIs                  │
+                            └───────────────────────┬────────────────────────┘
+                                                    │
+                                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    FastAPI Backend (Python 3.12)                                │
+│ • Conversational Copilot Router (`/api/investigations/{id}/copilot/chat`)                       │
+│ • LangGraph StateGraph Agentic Workflow (`llama-3.3-70b-versatile` & GxP Offline Fallback)      │
+│ • Multi-Format Document Ingestion Engine (PyMuPDF, text cleaner, SHA-256 integrity)             │
+│ • 5 Whys Root Cause Analysis Engine (exclusive methodology)                                    │
+│ • Evidence-Linked CAPA Formulation Engine (containment, corrective, preventive)                │
+│ • PostgreSQL Persistence Layer (SQLAlchemy 2.0 + Alembic Migrations)                            │
+└───────────────────────────────────────────────────┬─────────────────────────────────────────────┘
+                                                    │
+                                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    PostgreSQL Database (`ai_rca_db`)                            │
+│ • Investigations Dossier (lifecycle status, GxP reviewer notes, audit timestamps)               │
+│ • Source Documents & Evidence Records (citations, calibration data, assay results)              │
+│ • Cause Candidates (hypotheses vs confirmed causes)                                             │
+│ • CAPA Action Commitments (owners, due dates, effectiveness verification criteria)               │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Layer | Technology | Key Capabilities |
 |---|---|---|
-| **Frontend** | React 19, Vite, Redux Toolkit, Axios | 6-stage guided investigation stepper, responsive layout, real-time draft state, printable GxP dossiers |
-| **Backend** | Python 3.12, FastAPI, Pydantic v2 | High-throughput async REST endpoints, GxP validation constraints, dependency injection |
-| **AI Orchestration** | LangGraph, LangChain Core | Multi-stage stateful StateGraph pipelines with deterministic GxP offline fallbacks |
+| **Frontend** | React 19, Vite, Redux Toolkit, Tailwind CSS | Single-page split workspace, real-time Redux synchronization, interactive Copilot cards, Final Review Modal, GxP print export |
+| **Backend** | Python 3.12, FastAPI, Pydantic v2 | High-throughput async REST endpoints, GxP validation constraints, conversational copilot service |
+| **AI Orchestration** | LangGraph, LangChain Core | Multi-turn stateful StateGraph pipelines with deterministic GxP offline fallback algorithms |
 | **LLM Inference** | Groq API (`llama-3.3-70b-versatile`) | High-speed LLM inference with structured JSON output and prompt engineering |
 | **Document Engine** | PyMuPDF (fitz), Python email/re | Page-by-page PDF parsing, RFC-822 email parser, whitespace normalizer, SHA-256 integrity |
 | **Database** | PostgreSQL, SQLAlchemy 2.0, Alembic | Relational schema with cascade deletions, foreign key indexes, and full audit timestamps |
-| **Quality & Testing** | Pytest, Node Test Runner, Oxlint | 50 automated backend tests, 12 frontend tests, 0 lint warnings |
+| **Quality & Testing** | Pytest, Node Test Runner, Vite | 56 automated backend tests (100% passing), 12 frontend tests, 0 lint warnings |
 
 ---
 
 ## 🔒 GxP & Regulatory Safety Principles (21 CFR Part 11)
 
 1. **Human Authority Boundary**: The AI acts strictly as an analytical assistant. AI outputs remain classified as `hypothesis`, `needs_evidence`, or `evidence_supported_pending_review`.
-2. **Never Auto-Confirm**: No AI node or API call can mark a root cause as `confirmed` or close an investigation automatically. Only an authorized human investigator can confirm a cause.
-3. **Mandatory Reviewer Justification**: Confirming or rejecting a root cause candidate requires an explicit technical justification note (enforced via HTTP 422 if omitted).
-4. **Preservation of Human Edits**: Re-running AI extractions or analysis graphs never silently overwrites reviewer-edited incident fields without explicit overwrite flags.
-5. **No Hallucinated Records or Roles**: CAPA actions assign roles only (e.g. `Maintenance Lead`, `Validation Specialist`), never hallucinating employee names.
+2. **Never Auto-Confirm**: No AI node or API call can mark a root cause as `confirmed` or close an investigation automatically.
+3. **Mandatory Reviewer Justification**: Confirming or saving a reviewed investigation requires an explicit technical justification note (enforced via HTTP 422 if omitted).
+4. **Preservation of Human Edits**: Re-running AI extractions or conversational updates preserves user-edited incident fields unless explicitly overwritten.
+5. **Role-Based CAPA Owners**: CAPA actions assign organizational roles only (e.g., `Quality Assurance Lead`, `Maintenance Specialist`), avoiding hallucinated employee names.
 
 ---
 
-## 📋 Guided 6-Stage Investigation Workflow
+## 🌟 Primary Application Workflow
 
-1. **Stage 1: Evidence Intake & Ingestion (`IntakeStage.jsx`)**
-   - Upload deviation PDFs, paste unstructured shift logs, or ingest `.eml` email records.
-   - Computes SHA-256 checksums, page counts, and sanitizes filenames.
-   - Built-in `Load Sample API-X Incident` button instantly preloads the synthetic API purity deviation scenario.
-2. **Stage 2: AI Incident Extraction (`FormStage.jsx`)**
-   - Extracts 11 standardized pharmaceutical deviation fields (Product, Batch, Stage, Problem Statement, Expected/Observed Results, Immediate Actions, Equipment, Severity).
-   - Shows source citation provenance (filename, page number, excerpt) and confidence percentage.
-   - In-line human verification toggle (`Accept`, `Reject`, `Edit`) for every individual fact.
-3. **Stage 3: Evidence Extraction & Gap Analysis (`EvidenceStage.jsx`)**
-   - Parses technical evidence (calibration certificates, batch records, analytical assays).
-   - Detects chronological anomalies (e.g. post-incident calibration used to justify pre-incident run).
-   - Flags cross-document inconsistencies and generates actionable investigation gap alerts.
-4. **Stage 4: Root Cause Analysis Methods (`RcaMethodsStage.jsx`)**
-   - **5 Whys Analysis**: Interactive multi-step iterative causal drill-down.
-   - **Ishikawa 6M Fishbone**: Categorization into *Machine*, *Method*, *Material*, *People*, *Measurement*, and *Environment*.
-   - **Cause vs Evidence Matrix**: Separates supporting from contradicting evidence (e.g. solvent purity COA refuting raw material hypothesis).
-   - Human qualification controls (`Confirm Root Cause`, `Reject`, `Mark Needs Evidence`).
-5. **Stage 5: CAPA Action Formulation (`CapaStage.jsx`)**
-   - AI generates structured actions categorized into *Containment*, *Corrective*, *Preventive*, and *Investigation Follow-up*.
-   - Assigns role-based owners and defines measurable effectiveness check criteria (e.g., 3 consecutive commercial batches with purity $\ge 99.0\%$).
-   - Safety rule: If no cause is evidence-supported, CAPA generation is deferred with an explicit warning.
-6. **Stage 6: Investigation Dossier & Formal Sign-Off (`SummaryStage.jsx`)**
-   - Consolidated executive review of the entire investigation dossier.
-   - Qualified reviewer identity recording (`reviewer_name`, `reviewer_role`, `reviewer_note`, lifecycle status).
-   - Direct PostgreSQL persistence with audit timestamps.
-   - One-click DB reload and print/export dossier formatted for regulatory submission.
+1. **Document / Narrative Intake**:
+   - The user drops a deviation PDF or enters narrative text into the Copilot input dock on the right.
+   - The AI extracts structured incident fields (product, batch, stage, observed lab result, equipment).
+2. **Live RCA Form Synchronization**:
+   - The Live RCA Form on the left automatically populates with extracted parameters.
+   - Field status badges indicate `Extracted`, `Modified`, or `Awaiting Input`.
+3. **Conversational Exploration & Field Refinement**:
+   - The user communicates naturally (e.g., *"Update the batch number to BATCH-2026-014"* or *"Why is calibration important?"*).
+   - The AI distinguishes general questions from field updates and synchronizes state in real time.
+4. **5 Whys Root Cause Analysis (Exclusive Methodology)**:
+   - The user asks *"Run the 5 Whys analysis"* or clicks **"⚡ Commit Incident & Run 5 Whys"**.
+   - The system traces the causal path from observed deviation to systemic root cause (step-by-step with evidence links).
+5. **Inline Evidence Gaps & CAPA Formulation**:
+   - The Copilot highlights open evidence gaps directly in interactive cards.
+   - The system formulates evidence-linked CAPA commitments (containment, corrective, preventive) with measurable effectiveness criteria.
+6. **Final Review Modal & PostgreSQL Persistence**:
+   - The user opens the **Final Review Modal**, inspects and edits parameters, reviews the 5 Whys path and CAPA actions.
+   - The user enters reviewer credentials and a mandatory GxP justification note.
+   - The reviewed investigation is permanently saved to PostgreSQL `ai_rca_db` and can be printed/exported as a PDF dossier.
 
 ---
 
-## 🚀 Quick Start Guide
+## 🚀 Quick Start & Running URLs
+
+### Running Service URLs
+
+| Service | URL | Description |
+|---|---|---|
+| **Frontend Application** | [http://127.0.0.1:5173](http://127.0.0.1:5173) | Single-page split workspace with Copilot & live form |
+| **FastAPI Backend API** | [http://127.0.0.1:8000](http://127.0.0.1:8000) | REST API endpoints for copilot, documents, RCA, and CAPA |
+| **Interactive API Docs** | [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) | Swagger OpenAPI interactive documentation |
+| **API Health Check** | [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health) | Live system health and database connectivity probe |
 
 ### Prerequisites
 - **Python**: 3.10+ (Python 3.12 recommended)
 - **Node.js**: 18+ (Node 20 or 24 recommended)
-- **PostgreSQL**: Local or cloud instance (e.g. Supabase, Neon, or local Docker)
+- **PostgreSQL**: Local or managed instance on port 5432 (`ai_rca_db`)
 
 ### 1. Backend Setup
 
 ```bash
-# Navigate to backend directory
 cd ai-rca-module/backend
 
-# Create and activate virtual environment
-# Windows PowerShell:
+# Virtual environment setup (Windows PowerShell)
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-# Linux / macOS:
-# python3 -m venv venv && source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure environment
-cp .env.example .env
-# Edit .env with your PostgreSQL DATABASE_URL and optional GROQ_API_KEY
-# If GROQ_API_KEY is omitted, the system seamlessly uses deterministic GxP offline fallback algorithms.
-
 # Run database migrations
 alembic upgrade head
 
-# Start FastAPI server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# Start backend server
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
-
-- API Health Check: [http://localhost:8000/api/health](http://localhost:8000/api/health)
-- Swagger OpenAPI Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ### 2. Frontend Setup
 
 ```bash
-# In a new terminal, navigate to frontend directory
 cd ai-rca-module/frontend
 
 # Install dependencies
 npm install
 
-# Start Vite development server
-npm run dev
+# Start Vite frontend server
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
-
-- Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ---
 
-## 🧪 Comprehensive Automated Test Suites
+## 🧪 Automated Test Verification
 
-### Backend Tests (50 Tests Passing)
+### Backend Tests (56 Passing Tests)
 ```bash
 cd ai-rca-module/backend
-.\venv\Scripts\pytest.exe -v
+.\venv\Scripts\python.exe -m pytest tests/ -v
 ```
-Test modules include:
-- `test_health.py`: Health check and landing endpoints.
-- `test_database.py`: SQLAlchemy ORM models, relations, cascades.
-- `test_document_parser.py`: PyMuPDF page parsing, email RFC-822, whitespace cleaner, SHA-256.
-- `test_document_api.py`: Uploads, text ingest, validation errors, security sanitization.
-- `test_extraction.py`: LangGraph extraction node, complete/partial sources, edit preservation.
-- `test_evidence.py`: Evidence records, gap detection, timeline anomalies, conflict identification.
-- `test_rca_methods.py`: 5 Whys chain, Fishbone 6M categorization, human qualification.
-- `test_cause_assessment.py`: Supporting/contradicting evidence matrix, mandatory justification note.
-- `test_capa.py`: CAPA generation, deferral without supported cause, role assignment, acceptance.
-- `test_persistence.py`: Field updates, reviewed draft saving, GxP sign-off, full dossier reload.
-- `test_workflow.py`: LangGraph StateGraph compilation, execution, and Groq health probe.
+All 56 tests pass across document parsing, extraction, evidence gaps, 5 Whys causal analysis, CAPA generation, PostgreSQL persistence, and conversational copilot chat.
 
-### Frontend Tests (12 Tests Passing)
+### Frontend Verification
 ```bash
 cd ai-rca-module/frontend
 npm test
 npm run lint
 npm run build
 ```
-- 12 unit tests verifying Redux slices, human review actions, gap resolution, sample data preloader, and dossier serialization.
-- Oxlint: 0 warnings, 0 errors across 21 files.
-- Vite build: Production bundle created cleanly.
+Builds cleanly with 0 errors and 0 lint warnings.
 
 ---
 
 ## 🧪 Demonstration Scenario: API-X Batch Purity OOS
 
-To demonstrate the full end-to-end investigation:
-1. Open [http://localhost:5173](http://localhost:5173).
+1. Open [http://127.0.0.1:5173](http://127.0.0.1:5173).
 2. Click **"🧪 Load Sample API-X Incident"** in the top navigation bar.
 3. Observe the preloaded scenario:
-   - **Deviation**: API-X Batch `BATCH-2026-014` purity HPLC assay yielded `98.1%` (below limit $\ge 99.0\%$).
-   - **Evidence 1**: Deviation Incident Report (`doc-001`).
-   - **Evidence 2**: Calibration Certificate for `TEMP-SENSOR-014` showing `+0.8°C` drift (`doc-002`).
-   - **Contradicting Evidence**: Solvent Lot `S-8821` COA showed `99.8%` purity, refuting raw material impurity.
-4. Step through the stages:
-   - **Stage 2**: View extracted incident fields with confidence scores and source citations.
-   - **Stage 3**: Review identified calibration anomaly and missing cooling jacket telemetry gap.
-   - **Stage 4**: Inspect the 5 Whys causal chain and Fishbone 6M diagram. Review the Cause vs Evidence Matrix. Click **"Confirm Root Cause"** on Sensor Drift and enter justification note.
-   - **Stage 5**: Generate and approve evidence-linked CAPA actions (sensor recalibration, cooling jacket SOP update).
-   - **Stage 6**: Enter reviewer sign-off details, click **"💾 Save & Persist Reviewed Investigation Dossier"**, and click **"🔄 Reload from DB"** to verify PostgreSQL persistence.
+   - **Deviation**: API-X Batch `BATCH-2026-014` purity HPLC assay was `98.1%` (below registered spec $\ge 99.0\%$).
+   - **Evidence 1**: Deviation Incident Report.
+   - **Evidence 2**: Calibration Certificate for `TEMP-SENSOR-014` showing `+0.8°C` drift.
+4. Interact with the **AI Copilot** on the right:
+   - Type *"Why is equipment calibration important?"* -> receives educational response without mutating fields.
+   - Type *"Update the equipment identifier to TEMP-SENSOR-014"* -> live form updates immediately.
+   - Click **"🔍 5 Whys"** -> displays 5-step causal path highlighting sensor drift as the root cause.
+   - Click **"🛡️ Suggest CAPA"** -> displays containment, corrective, and preventive action cards.
+5. Click **"📋 Open Final Review Modal"**:
+   - Inspect and edit parameters, review the 5 Whys chain and CAPA commitments.
+   - Enter Reviewer Name (`Dr. Eleanor Vance`), Role (`QA Director`), and GxP Justification Note.
+   - Click **"💾 Save Investigation to PostgreSQL"** -> confirms persistence with generated reference code.
+   - Click **"🖨️ Print / Export Dossier"** for regulatory archive.

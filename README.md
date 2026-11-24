@@ -1,8 +1,10 @@
-# AI-Powered Root Cause Analysis (RCA) Module
+# AI RCA Module — AI-Powered Root Cause Analysis
 
-> **GxP-Compliant AI-Assisted Deviation Investigation, Root Cause Analysis, and CAPA Management for Pharmaceutical Manufacturing**
+> **AI-assisted pharmaceutical quality investigation, root cause analysis, and CAPA recommendations.**
 
-An intelligent, full-stack investigation platform designed specifically for pharmaceutical quality assurance (QA) and regulatory compliance teams. The application guides investigators through Active Pharmaceutical Ingredient (API) deviations (such as out-of-specification purity assays), orchestrates multi-source document ingestion, executes agentic reasoning via **LangGraph** and **Groq (`llama-3.3-70b-versatile`)**, detects timeline anomalies and evidence conflicts, maps causal chains using **5 Whys** and **Ishikawa 6M Fishbone**, cross-references supporting versus contradicting evidence, and formulates measurable **CAPA action plans**—while strictly enforcing human authority boundaries per FDA 21 CFR Part 11.
+The **AI RCA Module** is an AI-first, single-page investigation workspace designed specifically for pharmaceutical quality assurance (QA), manufacturing deviation triage, and regulatory compliance teams. 
+
+The application implements a split-screen desktop workspace featuring a live, AI-populated investigation form on the left (~60%) and an interactive conversational AI Copilot on the right (~40%). Users interact naturally with the Copilot to upload incident documents (PDF/TXT), provide narrative updates, execute 5 Whys root cause analysis, identify evidence gaps, formulate evidence-linked CAPA commitments, and formally sign off on the investigation dossier via a GxP Review Modal before persisting to PostgreSQL.
 
 ---
 
@@ -12,31 +14,31 @@ The complete project implementation is located in the [`ai-rca-module/`](./ai-rc
 
 ```text
 ai-rca-module/
-├── frontend/                     # React 19 + Vite + Redux Toolkit SPA
+├── frontend/                     # React 19 + Vite + Redux Toolkit Single-Page Workspace
 │   ├── src/
-│   │   ├── components/           # Navigation, health cards, badges
-│   │   ├── features/             # Redux Toolkit investigation slice & tests
-│   │   ├── layouts/              # Master 6-stage investigation stepper workspace
-│   │   ├── pages/stages/         # Intake, Form, Evidence, RCA Methods, CAPA, Summary
-│   │   └── services/             # Axios API client abstraction layer
+│   │   ├── components/           # FinalReviewModal, HealthCard, UI badges
+│   │   ├── features/             # Redux Toolkit investigation slice & test harness
+│   │   ├── pages/                # InvestigationWorkspace (60% Form / 40% Copilot)
+│   │   └── services/             # Axios API client (conversational copilot, RCA, CAPA)
 │   ├── package.json
 │   └── vite.config.js
 │
 ├── backend/                      # Python 3.12 + FastAPI Async REST Backend
-│   ├── alembic/                  # Database migration versions
+│   ├── alembic/                  # Database migration versions (6 migrations)
+│   │   └── versions/             # Base schema through reviewer notes
 │   ├── app/
-│   │   ├── ai/                   # LangGraph StateGraph, nodes, prompts, Groq client
-│   │   ├── api/v1/               # Health, Documents, Extraction, Evidence, RCA, CAPA, Dossier
+│   │   ├── ai/                   # LangGraph StateGraph, conversational copilot, 5 Whys, CAPA
+│   │   ├── api/v1/               # Copilot, Documents, Extraction, Evidence, RCA, CAPA, Dossier
 │   │   ├── core/                 # Config & Pydantic settings
 │   │   ├── database/             # SQLAlchemy engine & session management
 │   │   ├── models/               # Investigation, Evidence, Cause, and CAPA ORM entities
 │   │   ├── schemas/              # Pydantic v2 validation contracts
 │   │   └── services/             # Document parser (PyMuPDF, email RFC-822, normalizer)
 │   ├── requirements.txt
-│   └── tests/                    # 50 comprehensive pytest suites
+│   └── tests/                    # 56 comprehensive pytest suites (100% passing)
 │
-├── .gitignore                    # Comprehensive exclusion rules (venv, secrets, node_modules)
-└── README.md                     # Complete project documentation & guide
+├── .gitignore                    # GxP compliance & confidentiality exclusion rules
+└── README.md                     # Comprehensive project documentation
 ```
 
 For full architectural documentation, API contracts, and user guides, please refer to:
@@ -44,9 +46,18 @@ For full architectural documentation, API contracts, and user guides, please ref
 
 ---
 
-## ⚡ Quick Start Commands
+## ⚡ Running Services & URLs
 
-### Backend (FastAPI):
+| Service | URL | Description |
+|---|---|---|
+| **Frontend Application** | [http://127.0.0.1:5173](http://127.0.0.1:5173) | Single-page split workspace with Copilot & live form |
+| **FastAPI Backend API** | [http://127.0.0.1:8000](http://127.0.0.1:8000) | REST API endpoints for copilot, documents, RCA, and CAPA |
+| **Interactive API Docs** | [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) | Swagger OpenAPI interactive documentation |
+| **API Health Check** | [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health) | Live system health and database connectivity probe |
+
+### Quick Start Commands
+
+#### Backend (FastAPI):
 ```bash
 cd ai-rca-module/backend
 python -m venv venv
@@ -57,33 +68,12 @@ python -m venv venv
 
 pip install -r requirements.txt
 alembic upgrade head
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-### Frontend (React + Vite):
+#### Frontend (React + Vite):
 ```bash
 cd ai-rca-module/frontend
 npm install
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
-
-- Web Application: [http://localhost:5173](http://localhost:5173)
-- API Swagger Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
-- Health Check: [http://localhost:8000/api/health](http://localhost:8000/api/health)
-
----
-
-## 🧪 Verification & Automated Testing
-
-- **Backend Tests (50/50 passing)**:
-  ```bash
-  cd ai-rca-module/backend
-  .\venv\Scripts\pytest.exe -v
-  ```
-- **Frontend Tests (12/12 passing, 0 lint errors)**:
-  ```bash
-  cd ai-rca-module/frontend
-  npm test
-  npm run lint
-  npm run build
-  ```
