@@ -1,16 +1,8 @@
 import React from 'react';
-import Navbar from './layouts/Navbar';
-import Dashboard from './pages/Dashboard';
+import WorkspaceLayout from './layouts/WorkspaceLayout';
 
 export const App = () => {
-  return (
-    <div className="app-container" style={{ minHeight: '100vh', backgroundColor: '#0b1120' }}>
-      <Navbar />
-      <main>
-        <Dashboard />
-      </main>
-    </div>
-  );
+  return <WorkspaceLayout />;
 };
 
 export default App;

@@ -1,5 +1,6 @@
 {
-  "name": "frontend",
+  "name": "ai-rca-module",
+  "description": "AI-assisted pharmaceutical quality investigation, root cause analysis, and CAPA management.",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -7,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
+    "test": "node --test",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -14,6 +16,7 @@
     "axios": "^1.21.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "react-hook-form": "^7.92.0",
     "react-redux": "^9.3.1"
   },
   "devDependencies": {

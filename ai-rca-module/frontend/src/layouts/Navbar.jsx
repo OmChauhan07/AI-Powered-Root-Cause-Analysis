@@ -7,7 +7,7 @@ export const Navbar = () => {
         <div style={navStyles.brand}>
           <div style={navStyles.logo}>AI</div>
           <div>
-            <div style={navStyles.brandTitle}>AIVOA.AI</div>
+            <div style={navStyles.brandTitle}>AI RCA Module</div>
             <div style={navStyles.brandSub}>AI-Powered Root Cause Analysis</div>
           </div>
         </div>

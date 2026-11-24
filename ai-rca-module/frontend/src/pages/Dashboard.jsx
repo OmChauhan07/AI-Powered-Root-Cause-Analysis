@@ -10,11 +10,9 @@ export const Dashboard = () => {
       {/* Hero Section */}
       <div style={dashStyles.hero}>
         <div style={dashStyles.tag}>Architecture & Environment Status</div>
-        <h1 style={dashStyles.heroTitle}>AI-Powered Root Cause Analysis (RCA)</h1>
+        <h1 style={dashStyles.heroTitle}>AI RCA Module</h1>
         <p style={dashStyles.heroSubtitle}>
-          Full-stack diagnostic and automated incident triage pipeline powered by
-          <strong> FastAPI</strong>, <strong>LangGraph</strong>, <strong>Groq API</strong>, and
-          <strong> PostgreSQL</strong>.
+          <strong>AI-Powered Root Cause Analysis</strong> — AI-assisted pharmaceutical quality investigation, root cause analysis, and CAPA management.
         </p>
       </div>
 
