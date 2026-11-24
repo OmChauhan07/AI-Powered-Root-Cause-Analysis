@@ -91,7 +91,7 @@ export const InvestigationWorkspace = () => {
 
       // 1. Synchronize live form fields if Copilot extracted or updated fields
       if (res.field_updates && Object.keys(res.field_updates).length > 0) {
-        dispatch(setIncidentFields({ fields: res.field_updates, overwrite: false }));
+        dispatch(setIncidentFields({ fields: res.field_updates, overwrite: true }));
       }
 
       // 2. Synchronize 5 Whys causal chain if present
