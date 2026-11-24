@@ -12,6 +12,7 @@ from app.ai.state import RCAState
 from app.ai.nodes import (
     extract_incident_fields_node,
     analyze_evidence_and_gaps_node,
+    rca_investigation_methods_node,
     log_analyzer_node,
     hypothesis_generator_node,
     root_cause_identifier_node,
@@ -46,6 +47,20 @@ def build_evidence_gap_graph():
 
     compiled = builder.compile()
     logger.info("LangGraph Evidence & Gap analysis workflow compiled successfully.")
+    return compiled
+
+
+def build_rca_methods_graph():
+    """Builds and compiles the 5 Whys and Fishbone RCA investigation methods LangGraph workflow."""
+    builder = StateGraph(RCAState)
+
+    builder.add_node("rca_investigation_methods", rca_investigation_methods_node)
+
+    builder.add_edge(START, "rca_investigation_methods")
+    builder.add_edge("rca_investigation_methods", END)
+
+    compiled = builder.compile()
+    logger.info("LangGraph RCA Methods workflow compiled successfully.")
     return compiled
 
 

@@ -138,6 +138,12 @@ export const investigationSlice = createSlice({
     updateFiveWhysChain: (state, action) => {
       state.fiveWhysChains = action.payload;
     },
+    setFishboneCategories: (state, action) => {
+      state.fishboneCategories = action.payload;
+    },
+    setCauseCandidates: (state, action) => {
+      state.causeCandidates = action.payload;
+    },
     updateFishboneCategory: (state, action) => {
       const { category, items } = action.payload;
       if (category in state.fishboneCategories) {
@@ -325,6 +331,8 @@ export const {
   addSourceDocument,
   removeSourceDocument,
   updateFiveWhysChain,
+  setFishboneCategories,
+  setCauseCandidates,
   updateFishboneCategory,
   updateCauseCandidateStatus,
   updateCapaActionStatus,

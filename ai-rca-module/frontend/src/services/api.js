@@ -152,4 +152,37 @@ export const resolveInvestigationGap = async (investigationId, gapId) => {
   return response.data;
 };
 
+/**
+ * Trigger RCA Methods Analysis (5 Whys or Fishbone 6M)
+ * Calls POST /api/investigations/{investigationId}/rca-methods/analyze
+ */
+export const triggerRcaAnalysis = async (investigationId, method = 'five_whys') => {
+  const response = await apiClient.post(`/api/investigations/${investigationId}/rca-methods/analyze`, {
+    method,
+  });
+  return response.data;
+};
+
+/**
+ * Fetch stored RCA methods data (5 Whys, Fishbone, Cause Candidates)
+ * Calls GET /api/investigations/{investigationId}/rca-methods
+ */
+export const fetchRcaMethods = async (investigationId) => {
+  const response = await apiClient.get(`/api/investigations/${investigationId}/rca-methods`);
+  return response.data;
+};
+
+/**
+ * Review/qualify a cause candidate (Human-in-the-Loop)
+ * Calls PATCH /api/investigations/{investigationId}/causes/{causeId}
+ */
+export const updateCauseStatus = async (investigationId, causeId, reviewStatus, reviewerNote = null, candidateText = null) => {
+  const response = await apiClient.patch(`/api/investigations/${investigationId}/causes/${causeId}`, {
+    review_status: reviewStatus,
+    reviewer_note: reviewerNote,
+    candidate_text: candidateText,
+  });
+  return response.data;
+};
+
 export default apiClient;

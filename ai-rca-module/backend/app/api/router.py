@@ -3,6 +3,7 @@ from app.api.v1.health import router as health_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.investigations import router as investigations_router
 from app.api.v1.evidence import router as evidence_router
+from app.api.v1.rca_methods import router as rca_methods_router
 
 api_router = APIRouter()
 
@@ -17,3 +18,7 @@ api_router.include_router(investigations_router)
 
 # Mount evidence and gap analysis endpoints: accessible under /api/investigations/...
 api_router.include_router(evidence_router)
+
+# Mount RCA methods (5 Whys & Fishbone) endpoints: accessible under /api/investigations/...
+api_router.include_router(rca_methods_router)
+

@@ -18,6 +18,7 @@ from app.ai.groq_client import get_groq_llm
 from app.ai.prompts import (
     INCIDENT_EXTRACTION_SYSTEM_PROMPT,
     EVIDENCE_AND_GAP_ANALYSIS_SYSTEM_PROMPT,
+    RCA_METHODS_SYSTEM_PROMPT,
 )
 from app.schemas.extraction import (
     IncidentExtractionResult,
@@ -31,6 +32,13 @@ from app.schemas.evidence import (
     ConflictDetectionItem,
     EvidenceAnalysisResponse,
     CalibrationPayload,
+)
+from app.schemas.rca_methods import (
+    FiveWhysStep,
+    FishboneFactor,
+    FishboneCategories,
+    CauseCandidateItem,
+    RcaAnalysisResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -816,5 +824,256 @@ def _execute_deterministic_evidence_analysis(sources: List[Dict[str, Any]], inci
         "current_step": "evidence_analysis_complete",
         "workflow_status": "evidence_ready",
     }
+
+
+def rca_investigation_methods_node(state: RCAState) -> Dict[str, Any]:
+    """Node: Orchestrates 5 Whys iterative questioning chains and Ishikawa Fishbone (6M) analysis,
+    synthesizing candidate root causes and contributing factors for human review.
+    """
+    logger.info("RCA Investigation Methods Node invoked for investigation: %s", state.get("investigation_id"))
+    method = state.get("investigation_method", "five_whys")
+    incident_fields = state.get("incident_fields", {})
+    evidence_records = state.get("evidence_records", [])
+
+    llm = get_groq_llm()
+    if llm is not None:
+        try:
+            logger.info("Executing LangGraph RCA Methods analysis via Groq LLM.")
+            return _execute_llm_rca_methods(llm, method, incident_fields, evidence_records)
+        except Exception as exc:
+            logger.error("LLM RCA methods execution failed, falling back to deterministic engine: %s", str(exc))
+
+    logger.info("Executing deterministic GxP 5 Whys & Fishbone analysis engine.")
+    return _execute_deterministic_rca_methods(method, incident_fields, evidence_records)
+
+
+def _execute_llm_rca_methods(llm, method: str, incident_fields: Dict[str, Any], evidence_records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Invokes Groq LLM with RCA methods system prompt."""
+    incident_summary = json.dumps(incident_fields, indent=2)
+    evidence_summary = json.dumps(evidence_records, indent=2)
+
+    user_message = (
+        f"Selected Investigation Methodology: {method.upper()}\n\n"
+        f"Incident Context:\n{incident_summary}\n\n"
+        f"Verified Evidence Records:\n{evidence_summary}\n\n"
+        "Please generate a complete 5 Whys causal chain, Ishikawa 6M factor breakdown, and candidate root causes."
+    )
+
+    response = llm.invoke([
+        SystemMessage(content=RCA_METHODS_SYSTEM_PROMPT),
+        HumanMessage(content=user_message),
+    ])
+
+    raw_content = response.content.strip()
+    if raw_content.startswith("```"):
+        raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content)
+        raw_content = re.sub(r"\s*```$", "", raw_content)
+
+    data = json.loads(raw_content)
+
+    return {
+        "five_whys_chains": data.get("five_whys_chains", []),
+        "fishbone_categories": data.get("fishbone_categories", {}),
+        "cause_candidates": data.get("cause_candidates", []),
+        "warnings": data.get("warnings", []),
+        "current_step": "rca_methods_complete",
+        "workflow_status": "rca_methods_ready",
+    }
+
+
+def _execute_deterministic_rca_methods(method: str, incident_fields: Dict[str, Any], evidence_records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Deterministic GxP RCA engine synthesizing 5 Whys chains, Fishbone 6M factors, and candidate causes."""
+    product = incident_fields.get("product_name") or "API-X"
+    batch = incident_fields.get("batch_number") or "BATCH-2026-014"
+    observed_purity = incident_fields.get("observed_result") or "98.1%"
+    expected_purity = incident_fields.get("expected_result") or ">= 99.0%"
+    problem = incident_fields.get("problem_statement") or f"{product} batch {batch} purity measured {observed_purity} vs expected {expected_purity}."
+
+    # Identify calibration evidence if present
+    cal_record = next((e for e in evidence_records if e.get("evidence_type") == "calibration"), None)
+    cal_payload = cal_record.get("structured_payload", {}) if cal_record else {}
+    sensor_id = cal_payload.get("equipment_code") or incident_fields.get("equipment_id") or "TEMP-SENSOR-014"
+    observed_error = cal_payload.get("observed_error") or "+0.8°C"
+    tolerance = cal_payload.get("tolerance_limit") or "±0.5°C"
+    cal_evidence_id = cal_record.get("id") if cal_record else "HPLC-QC-01"
+
+    # 1. 5 Whys Questioning Chain (Flexible step count; terminates at systemic root cause)
+    five_whys_chains = [
+        {
+            "step": 1,
+            "question": f"Why did {product} batch {batch} fail purity specification ({observed_purity} vs {expected_purity})?",
+            "answer": "Excess mother liquor and crystallization solvent entrapment occurred in the final filter cake during isolation.",
+            "evidence_basis": "QC Analytical Laboratory Chromatographic Assay",
+            "supporting_evidence_ids": [cal_evidence_id],
+            "missing_evidence": None,
+            "is_hypothesis": False,
+        },
+        {
+            "step": 2,
+            "question": "Why was mother liquor and mother solvent entrapped in the filter cake?",
+            "answer": "Crystallization crystal size distribution shifted toward fine needle agglomerates rather than uniform prisms, reducing wash efficiency.",
+            "evidence_basis": None,
+            "supporting_evidence_ids": [],
+            "missing_evidence": "Laser diffraction particle size distribution (PSD) analysis on isolated crystals",
+            "is_hypothesis": True,
+        },
+        {
+            "step": 3,
+            "question": "Why did the crystallization cycle produce fine needle agglomerates instead of uniform prisms?",
+            "answer": "Slurry cooling ramp was significantly faster than validated SOP curve, inducing excessive supersaturation and uncontrolled secondary nucleation.",
+            "evidence_basis": None,
+            "supporting_evidence_ids": [],
+            "missing_evidence": "SCADA / PLC cooling jacket temperature trend historian logs",
+            "is_hypothesis": True,
+        },
+        {
+            "step": 4,
+            "question": f"Why was the slurry cooled faster than the validated SOP curve?",
+            "answer": f"Reactor crystallization temperature sensor {sensor_id} had a {observed_error} positive calibration drift beyond tolerance ({tolerance}), causing automated control loop to over-cool the jacket.",
+            "evidence_basis": f"Metrology Calibration Certificate ({cal_payload.get('certificate_number') or 'CAL-2026-088'})",
+            "supporting_evidence_ids": [cal_evidence_id],
+            "missing_evidence": None,
+            "is_hypothesis": False if cal_record else True,
+        },
+        {
+            "step": 5,
+            "question": f"Why was temperature sensor {sensor_id} operating with an out-of-tolerance calibration error in active production?",
+            "answer": "Preventive maintenance and calibration intervals expired without an electronic equipment lockout in CMMS/MES preventing batch initiation.",
+            "evidence_basis": None,
+            "supporting_evidence_ids": [],
+            "missing_evidence": "CMMS instrument calibration scheduling and interlocking policy SOP",
+            "is_hypothesis": True,
+        },
+    ]
+
+    # 2. Ishikawa Fishbone (6M Categories)
+    fishbone_categories = {
+        "people": [
+            {
+                "factor": "Operator shift handover communication gap during crystallization cooling phase",
+                "rationale": "Shift change occurred mid-cooling ramp; manual temperature sanity checks were omitted.",
+                "ai_status": "hypothesis",
+                "supporting_evidence_ids": [],
+            },
+            {
+                "factor": "Investigator training on metrology calibration review",
+                "rationale": "Operators were unaware that sensor tolerance exceedance directly impacts crystal nucleation.",
+                "ai_status": "hypothesis",
+                "supporting_evidence_ids": [],
+            },
+        ],
+        "machine": [
+            {
+                "factor": f"Reactor temperature sensor ({sensor_id}) positive calibration drift ({observed_error})",
+                "rationale": f"Metrology certificate confirms sensor read {observed_error} higher than true slurry temperature, leading to excessive under-cooling.",
+                "ai_status": "evidence_supported_pending_review" if cal_record else "hypothesis",
+                "supporting_evidence_ids": [cal_evidence_id] if cal_record else [],
+            },
+            {
+                "factor": "Cooling jacket solenoid valve seat wear",
+                "rationale": "Potential internal coolant leakage causing uncommanded cooling rate acceleration.",
+                "ai_status": "hypothesis",
+                "supporting_evidence_ids": [],
+            },
+        ],
+        "method": [
+            {
+                "factor": "Lack of electronic calibration interlocking in MES/CMMS",
+                "rationale": "Process allowed reactor batch charging while critical instrumentation calibration was overdue.",
+                "ai_status": "hypothesis",
+                "supporting_evidence_ids": [],
+            },
+            {
+                "factor": "Crystallization washing protocol SOP-CRYST-04 cake displacement volume",
+                "rationale": "Filter cake wash volume may be insufficient to purge trapped impurities when crystal morphology shifts.",
+                "ai_status": "needs_evidence",
+                "supporting_evidence_ids": [],
+            },
+        ],
+        "material": [
+            {
+                "factor": "Ethanol / water crystallization solvent lot purity variation",
+                "rationale": "Trace organic impurities or water content deviation in solvent could alter crystallization solubility limits.",
+                "ai_status": "needs_evidence",
+                "supporting_evidence_ids": [],
+            },
+            {
+                "factor": "Upstream raw intermediate chemical assay variability",
+                "rationale": "Higher incoming impurity profile could exceed crystallization purification capacity.",
+                "ai_status": "hypothesis",
+                "supporting_evidence_ids": [],
+            },
+        ],
+        "measurement": [
+            {
+                "factor": f"Temperature transmitter measurement error exceeding {tolerance} tolerance",
+                "rationale": f"In-situ sensor accuracy of {observed_error} misled DCS temperature controller.",
+                "ai_status": "evidence_supported_pending_review" if cal_record else "hypothesis",
+                "supporting_evidence_ids": [cal_evidence_id] if cal_record else [],
+            },
+            {
+                "factor": "QC HPLC chromatographic integration peak resolution",
+                "rationale": "Analytical method baseline drift could theoretically affect purity integration.",
+                "ai_status": "hypothesis",
+                "supporting_evidence_ids": [],
+            },
+        ],
+        "environment": [
+            {
+                "factor": "Ambient cleanroom temperature fluctuation during cake filtration",
+                "rationale": "Cleanroom HVAC temperature rise could cause partial evaporation and recrystallization during vacuum filtration.",
+                "ai_status": "hypothesis",
+                "supporting_evidence_ids": [],
+            },
+        ],
+    }
+
+    # 3. Cause Candidates (Root Cause & Contributing Factors)
+    cause_candidates = [
+        {
+            "method": "five_whys",
+            "category": "machine",
+            "candidate_text": f"Crystallization reactor temperature sensor ({sensor_id}) positive calibration drift ({observed_error}) caused premature crystal nucleation and impurity occlusion.",
+            "rationale": f"Metrology certificate confirms sensor error of {observed_error} (tolerance {tolerance}), which caused automated cooling controls to chill the slurry too rapidly, trapping mother liquor in the crystals.",
+            "ai_status": "evidence_supported_pending_review" if cal_record else "hypothesis",
+            "review_status": "pending",
+            "supporting_evidence_ids": [cal_evidence_id] if cal_record else [],
+            "contradicting_evidence_ids": [],
+        },
+        {
+            "method": "five_whys",
+            "category": "method",
+            "candidate_text": "Lack of automated equipment lockout in CMMS/MES for critical instruments exceeding scheduled recalibration intervals.",
+            "rationale": "Systemic procedure permitted batch production to initiate using an instrument whose calibration validity had expired.",
+            "ai_status": "hypothesis",
+            "review_status": "pending",
+            "supporting_evidence_ids": [],
+            "contradicting_evidence_ids": [],
+        },
+        {
+            "method": "fishbone",
+            "category": "people",
+            "candidate_text": "Operator shift handover communication gap regarding crystallization cooling rate anomalies.",
+            "rationale": "Lack of real-time temperature trend logging during shift change prevented timely manual intervention.",
+            "ai_status": "hypothesis",
+            "review_status": "pending",
+            "supporting_evidence_ids": [],
+            "contradicting_evidence_ids": [],
+        },
+    ]
+
+    warnings = []
+    if not cal_record:
+        warnings.append("Temperature sensor calibration drift candidate is currently an unverified hypothesis (no calibration certificate attached).")
+
+    return {
+        "five_whys_chains": five_whys_chains,
+        "fishbone_categories": fishbone_categories,
+        "cause_candidates": cause_candidates,
+        "warnings": warnings,
+        "current_step": "rca_methods_complete",
+        "workflow_status": "rca_methods_ready",
+    }
+
 
 

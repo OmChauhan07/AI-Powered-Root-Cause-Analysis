@@ -37,6 +37,10 @@ class Investigation(Base):
     status = Column(String(50), default="draft", nullable=False)
     severity = Column(String(20), default="medium", nullable=False)
 
+    # Selected RCA method and intermediate data
+    investigation_method = Column(String(50), default="five_whys", nullable=True)
+    rca_method_data = Column(JSON, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(
@@ -51,6 +55,7 @@ class Investigation(Base):
     extracted_facts = relationship("ExtractedFact", back_populates="investigation", cascade="all, delete-orphan")
     evidence_records = relationship("EvidenceRecord", back_populates="investigation", cascade="all, delete-orphan")
     gaps = relationship("InvestigationGap", back_populates="investigation", cascade="all, delete-orphan")
+    cause_candidates = relationship("CauseCandidate", back_populates="investigation", cascade="all, delete-orphan")
 
 
 class SourceDocument(Base):
@@ -146,5 +151,30 @@ class InvestigationGap(Base):
 
     # Relationships
     investigation = relationship("Investigation", back_populates="gaps")
+
+
+class CauseCandidate(Base):
+    """Identified cause candidate resulting from 5 Whys or Fishbone analysis."""
+
+    __tablename__ = "cause_candidates"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid, index=True)
+    investigation_id = Column(String(36), ForeignKey("investigations.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    method = Column(String(50), default="five_whys", nullable=False)  # 'five_whys', 'fishbone'
+    category = Column(String(50), nullable=True)  # 'machine', 'method', 'material', 'people', 'measurement', 'environment'
+    candidate_text = Column(Text, nullable=False)
+    rationale = Column(Text, nullable=False)
+    ai_status = Column(String(50), default="hypothesis", nullable=False)  # 'hypothesis', 'needs_evidence', 'evidence_supported_pending_review', 'not_supported'
+    review_status = Column(String(50), default="pending", nullable=False)  # 'pending', 'confirmed', 'rejected', 'edited'
+    reviewer_note = Column(Text, nullable=True)
+    supporting_evidence_ids = Column(JSON, nullable=True)
+    contradicting_evidence_ids = Column(JSON, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationships
+    investigation = relationship("Investigation", back_populates="cause_candidates")
+
 
 
