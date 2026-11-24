@@ -10,6 +10,15 @@ httpx>=0.27.2
 sqlalchemy>=2.0.35
 psycopg[binary]>=3.2.0
 psycopg2-binary>=2.9.9
+alembic>=1.20.1
+
+# Testing & Quality
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+
+# Document Processing & Ingestion
+pymupdf>=2.1.0
+python-multipart>=0.0.12
 
 # AI & Orchestration
 langgraph>=0.2.45
