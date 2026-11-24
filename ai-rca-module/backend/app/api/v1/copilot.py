@@ -125,10 +125,8 @@ async def chat_with_copilot(
 
     # 4. Save newly generated 5 Whys or CAPA if executed during chat
     new_5whys = copilot_result.get("five_whys_chains", [])
-    if new_5whys and not five_whys_raw:
-        if inv.rca_method_data is None:
-            inv.rca_method_data = {}
-        inv.rca_method_data["five_whys_chains"] = new_5whys
+    if new_5whys:
+        inv.rca_method_data = {"five_whys_chains": new_5whys}
         db.commit()
 
     new_causes = copilot_result.get("cause_candidates", [])

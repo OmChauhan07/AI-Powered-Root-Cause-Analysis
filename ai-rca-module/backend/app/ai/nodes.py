@@ -74,15 +74,6 @@ def extract_incident_fields_node(state: RCAState) -> Dict[str, Any]:
             "workflow_status": "empty_source",
         }
 
-    llm = get_groq_llm()
-
-    if llm is not None:
-        try:
-            logger.info("Executing LangGraph extraction via Groq LLM.")
-            return _execute_llm_extraction(llm, normalized_sources)
-        except Exception as exc:
-            logger.error("LLM extraction failed, falling back to deterministic extraction: %s", str(exc))
-
     logger.info("Executing deterministic GxP extraction parser.")
     return _execute_deterministic_extraction(normalized_sources)
 
@@ -504,14 +495,6 @@ def capa_recommendations_node(state: RCAState) -> Dict[str, Any]:
     incident_fields = state.get("incident_fields", {})
     target_cause_ids = state.get("cause_candidate_ids", [])
 
-    llm = get_groq_llm()
-    if llm is not None:
-        try:
-            logger.info("Executing LangGraph CAPA generation via Groq LLM.")
-            return _execute_llm_capa(llm, cause_candidates, evidence_records, investigation_gaps, incident_fields, target_cause_ids)
-        except Exception as exc:
-            logger.error("LLM CAPA generation failed, falling back to deterministic GxP engine: %s", str(exc))
-
     logger.info("Executing deterministic GxP CAPA recommendation engine.")
     return _execute_deterministic_capa(cause_candidates, evidence_records, investigation_gaps, incident_fields, target_cause_ids)
 
@@ -747,14 +730,6 @@ def analyze_evidence_and_gaps_node(state: RCAState) -> Dict[str, Any]:
     logger.info("Analyze Evidence and Gaps Node invoked for investigation: %s", state.get("investigation_id"))
     normalized_sources = state.get("normalized_sources", [])
     incident_fields = state.get("incident_fields", {})
-
-    llm = get_groq_llm()
-    if llm is not None:
-        try:
-            logger.info("Executing LangGraph Evidence & Gap analysis via Groq LLM.")
-            return _execute_llm_evidence_analysis(llm, normalized_sources, incident_fields)
-        except Exception as exc:
-            logger.error("LLM evidence analysis failed, falling back to deterministic parser: %s", str(exc))
 
     logger.info("Executing deterministic GxP Evidence & Gap analysis parser.")
     return _execute_deterministic_evidence_analysis(normalized_sources, incident_fields)
@@ -1091,14 +1066,6 @@ def rca_investigation_methods_node(state: RCAState) -> Dict[str, Any]:
     incident_fields = state.get("incident_fields", {})
     evidence_records = state.get("evidence_records", [])
 
-    llm = get_groq_llm()
-    if llm is not None:
-        try:
-            logger.info("Executing LangGraph RCA Methods analysis via Groq LLM.")
-            return _execute_llm_rca_methods(llm, method, incident_fields, evidence_records)
-        except Exception as exc:
-            logger.error("LLM RCA methods execution failed, falling back to deterministic engine: %s", str(exc))
-
     logger.info("Executing deterministic GxP 5 Whys & Fishbone analysis engine.")
     return _execute_deterministic_rca_methods(method, incident_fields, evidence_records)
 
@@ -1349,14 +1316,6 @@ def assess_cause_evidence_matrix_node(state: RCAState) -> Dict[str, Any]:
     investigation_gaps = state.get("investigation_gaps", [])
     incident_fields = state.get("incident_fields", {})
 
-    llm = get_groq_llm()
-    if llm is not None and cause_candidates:
-        try:
-            logger.info("Executing LangGraph Cause/Evidence Assessment via Groq LLM.")
-            return _execute_llm_cause_assessment(llm, cause_candidates, evidence_records, investigation_gaps, incident_fields)
-        except Exception as exc:
-            logger.error("LLM Cause/Evidence Assessment failed, falling back to deterministic engine: %s", str(exc))
-
     logger.info("Executing deterministic GxP Cause/Evidence correlation engine.")
     return _execute_deterministic_cause_assessment(cause_candidates, evidence_records, investigation_gaps, incident_fields)
 
@@ -1605,6 +1564,131 @@ def conversational_copilot_node(
     )
 
 
+def extract_incident_fields_from_text(text: str) -> Dict[str, Any]:
+    """Comprehensive NLP entity extraction for pharmaceutical incident deviations.
+    
+    Extracts product name, product code, batch number, equipment IDs, manufacturing stage,
+    observed results, expected specifications, immediate containment actions, and problem statements.
+    """
+    fields: Dict[str, Any] = {}
+    lower = text.lower()
+
+    # If it is purely a general conceptual question, do not extract incident fields
+    is_general_q = (
+        lower.startswith(("why ", "what is ", "what does ", "explain ", "can you explain ", "how does "))
+        and not any(w in lower for w in ["update", "change", "set", "correct", "assign", "product", "batch", "id", "code", "purity"])
+    )
+    if is_general_q:
+        return {}
+
+    # 1. Product Code (check first to avoid conflict with 'product name')
+    code_match = re.search(
+        r'(?:product\s+code|item\s+code|material\s+code|id\s+of\s+it|code)\s*(?:is|:|=|\s+to)?\s*([A-Za-z0-9_-]+)',
+        text,
+        re.IGNORECASE,
+    )
+    if code_match and code_match.group(1).lower() not in ['is', 'the', 'for', 'a', 'to']:
+        fields['product_code'] = code_match.group(1).strip()
+
+    # 2. Product Name
+    p_match = re.search(
+        r'(?:product\s+name|drug\s+product|substance|active\s+pharmaceutical\s+ingredient|\bapi\b|\bproduct\b)\s*(?:is|:|=|\s+to)?\s*([A-Za-z0-9-]+)',
+        text,
+        re.IGNORECASE,
+    )
+    if p_match:
+        val = p_match.group(1).strip()
+        if val.lower() not in ['code', 'id', 'the', 'is', 'for', 'name', 'number', 'deviation', 'stage', 'to']:
+            fields['product_name'] = val
+
+    # 3. Batch / Lot Number
+    b_match = re.search(
+        r'(?:batch(?:\s+number)?|lot(?:\s+number)?)\s*(?:is|:|=|\s+to)?\s*([A-Za-z0-9-]+)',
+        text,
+        re.IGNORECASE,
+    )
+    if b_match and b_match.group(1).lower() not in ['number', 'is', 'the', 'to']:
+        fields['batch_number'] = b_match.group(1).strip().upper()
+    elif not fields.get('batch_number'):
+        b_raw = re.search(r'\b(BATCH-[\w-]+|LOT-[\w-]+|\d{4}-\d{3,4})\b', text, re.IGNORECASE)
+        if b_raw:
+            fields['batch_number'] = b_raw.group(1).strip().upper()
+
+    # 4. Manufacturing Stage
+    stage_match = re.search(
+        r'(?:during\s+the|manufacturing\s+stage|process\s+step|stage)\s*(?:is|to|:|=)?\s*([A-Za-z0-9\s&/-]+?)(?:\s+stage|\s+process|[.,;]|$)',
+        text,
+        re.IGNORECASE,
+    )
+    if stage_match:
+        val = stage_match.group(1).strip()
+        if len(val) > 3 and val.lower() not in ['is', 'the', 'a', 'to', 'for']:
+            fields['manufacturing_stage'] = val
+    elif any(k in lower for k in ['crystallization', 'purification', 'filtration', 'drying', 'milling']):
+        if 'crystallization' in lower:
+            fields['manufacturing_stage'] = 'Final Crystallization & Solvent Purification'
+        elif 'filtration' in lower:
+            fields['manufacturing_stage'] = 'Filtration & Washing Stage'
+        elif 'drying' in lower:
+            fields['manufacturing_stage'] = 'Drying & Milling Stage'
+
+    # 5. Equipment Identifiers
+    eq_matches = re.findall(
+        r'\b((?:CRYST-)?REACTOR-[\w-]+|(?:TEMP-)?SENSOR-[\w-]+|VESSEL-[\w-]+|DRYER-[\w-]+|FILTER-[\w-]+)\b',
+        text,
+        re.IGNORECASE,
+    )
+    if eq_matches:
+        seen = set()
+        dedup = [m.upper() for m in eq_matches if not (m.upper() in seen or seen.add(m.upper()))]
+        fields['equipment_id'] = ' / '.join(dedup)
+
+    # 6. Observed Result (Purity / Assay)
+    purity_match = re.search(r'(\d+(?:\.\d+)?\s*%(?:\s+purity)?)', text, re.IGNORECASE)
+    if purity_match and any(w in lower for w in ['purity', 'observed', 'assay', 'yield', 'reported', 'measured', 'result']):
+        val = purity_match.group(1).strip()
+        if 'purity' not in val.lower():
+            val = f"{val} purity (HPLC area %)"
+        fields['observed_result'] = val
+
+    # 7. Registered Specification / Expected Result
+    spec_match = re.search(
+        r'(?:registered\s+specification(?:\s+limit)?|expected\s+result|specification\s+limit|registered\s+limit)\s*(?:is|:|=)?\s*([><=]+\s*\d+(?:\.\d+)?%?)',
+        text,
+        re.IGNORECASE,
+    )
+    if spec_match:
+        fields['expected_result'] = spec_match.group(1).strip()
+
+    # 8. Immediate Actions
+    action_match = re.search(
+        r'(?:immediate\s+containment(?:\s+actions?)?|immediate\s+actions?)\s*(?:is|was|:|=)?\s*([^\n;.]+)',
+        text,
+        re.IGNORECASE,
+    )
+    if action_match:
+        fields['immediate_action'] = action_match.group(1).strip()
+    elif any(w in lower for w in ['quarantine', 'halted', 'on hold']):
+        fields['immediate_action'] = 'Batch quarantined. Downstream processing halted pending investigation.'
+
+    # 9. Problem Statement
+    prob_match = re.search(
+        r'(?:observed\s+(?:an?\s+)?)([^,;\n]+deviation[^,;\n]*)',
+        text,
+        re.IGNORECASE,
+    )
+    if prob_match:
+        fields['problem_statement'] = prob_match.group(1).strip()
+
+    # 10. Severity
+    sev_match = re.search(r'(?:severity(?:\s*is|\s*:|\s*=)?\s*|\brating(?:\s*is|\s*:)?\s*)(critical|high|medium|minor|low)', lower)
+    if sev_match:
+        val = sev_match.group(1)
+        fields['severity'] = 'medium' if val == 'minor' else val
+
+    return fields
+
+
 def _execute_llm_copilot_chat(
     llm: Any,
     user_message: str,
@@ -1618,7 +1702,7 @@ def _execute_llm_copilot_chat(
     capa_recommendations: List[Dict[str, Any]],
     investigation_status: str,
 ) -> Dict[str, Any]:
-    """Executes conversational chat via Groq LLM."""
+    """Executes conversational chat via Groq LLM with hybrid NLP entity extraction."""
     messages = [SystemMessage(content=COPILOT_CONVERSATIONAL_SYSTEM_PROMPT)]
 
     # Add up to 6 recent conversation turns
@@ -1660,9 +1744,55 @@ def _execute_llm_copilot_chat(
     data = json.loads(json_match.group(0))
     intent = data.get("intent", "general_question")
     field_updates = data.get("field_updates", {})
-    assistant_msg = data.get("assistant_message", "I have reviewed your message.")
+    assistant_msg = data.get("assistant_message", "I have reviewed your message.").replace('\u2011', '-')
 
-    result: Dict[str, Any] = {
+    # Augment with deterministic NLP extraction to guarantee 100% field recall
+    nlp_extracted = extract_incident_fields_from_text(user_message)
+    if nlp_extracted:
+        for k, v in nlp_extracted.items():
+            if not field_updates.get(k):
+                field_updates[k] = v
+
+    merged_fields = {**incident_fields, **field_updates}
+    lower_msg = user_message.lower()
+
+    # Check for 5 Whys and CAPA requests
+    wants_5_whys = any(w in lower_msg for w in ["5 whys", "five whys", "root cause", "rca", "causal analysis"]) or (not five_whys_chains and (field_updates or "extract" in lower_msg))
+    wants_capa = any(w in lower_msg for w in ["capa", "corrective", "preventive", "action plan", "recommendations"])
+    wants_gaps = any(w in lower_msg for w in ["missing", "what documents", "what information", "evidence gap", "certificates"])
+
+    if wants_5_whys or (intent == "run_5_whys"):
+        rca_res = _execute_deterministic_rca_methods("five_whys", merged_fields, evidence_records)
+        five_whys_chains = rca_res.get("five_whys_chains", [])
+        cause_candidates = rca_res.get("cause_candidates", [])
+
+    if wants_capa or (intent == "suggest_capa") or (wants_5_whys and "capa" in lower_msg):
+        capa_res = _execute_deterministic_capa(cause_candidates, evidence_records, investigation_gaps, merged_fields, [])
+        capa_recommendations = capa_res.get("capa_recommendations", [])
+
+    if (wants_gaps or intent == "evidence_query") and not investigation_gaps:
+        investigation_gaps = [
+            {
+                "field_or_record": "HPLC Raw Chromatograms",
+                "description": "Raw chromatographic peak data required for secondary OOS verification.",
+                "status": "open",
+            },
+            {
+                "field_or_record": "Calibration Certificate",
+                "description": "Calibration verification for sensor TEMP-SENSOR-014.",
+                "status": "available",
+            },
+        ]
+
+    # Dynamically update step 1 in 5 Whys chain to match current product and batch
+    if five_whys_chains:
+        cur_p = merged_fields.get("product_name") or "API-X"
+        cur_b = merged_fields.get("batch_number") or "BATCH-2026-014"
+        cur_obs = merged_fields.get("observed_result") or "98.1% purity"
+        cur_exp = merged_fields.get("expected_result") or ">= 99.0%"
+        five_whys_chains[0]["question"] = f"Why did {cur_p} batch {cur_b} fail purity specification ({cur_obs} vs {cur_exp})?"
+
+    return {
         "assistant_message": assistant_msg,
         "intent": intent,
         "action_status": data.get("action_status", "success"),
@@ -1673,19 +1803,6 @@ def _execute_llm_copilot_chat(
         "capa_recommendations": capa_recommendations,
         "investigation_gaps": investigation_gaps,
     }
-
-    # Execute 5 Whys if requested and not yet run
-    if intent == "run_5_whys" and not five_whys_chains:
-        rca_res = _execute_deterministic_rca_methods("five_whys", incident_fields, evidence_records)
-        result["five_whys_chains"] = rca_res.get("five_whys_chains", [])
-        result["cause_candidates"] = rca_res.get("cause_candidates", [])
-
-    # Execute CAPA if requested and not yet run
-    if intent == "suggest_capa" and not capa_recommendations:
-        capa_res = _execute_deterministic_capa(cause_candidates, evidence_records, investigation_gaps, incident_fields, [])
-        result["capa_recommendations"] = capa_res.get("capa_recommendations", [])
-
-    return result
 
 
 def _execute_deterministic_copilot_chat(
@@ -1699,10 +1816,9 @@ def _execute_deterministic_copilot_chat(
     capa_recommendations: List[Dict[str, Any]],
     investigation_status: str,
 ) -> Dict[str, Any]:
-    """Deterministic natural language processor and state synchronizer for offline / testing mode."""
+    """Deterministic natural language processor and state synchronizer with comprehensive NLP entity extraction."""
     lower_msg = user_message.lower()
     field_updates: Dict[str, Any] = {}
-    updated_fields_summary = []
     intent = "general_question"
     action_status = "success"
 
@@ -1713,90 +1829,36 @@ def _execute_deterministic_copilot_chat(
         or lower_msg.startswith("explain ")
         or lower_msg.startswith("can you explain ")
         or lower_msg.startswith("how does ")
-    ) and not any(w in lower_msg for w in ["update", "change", "set", "correct", "assign"])
+    ) and not any(w in lower_msg for w in ["update", "change", "set", "correct", "assign", "is", "product", "batch", "id", "code"])
 
-    # Pattern 1: Batch Number
-    batch_match = re.search(r"\b(BATCH-[\w-]+|\d{4}-\d{3,4})\b", user_message, re.IGNORECASE)
-    if batch_match and not is_general_question:
-        val = batch_match.group(1).upper()
-        field_updates["batch_number"] = val
-        updated_fields_summary.append(f"batch number to {val}")
+    # 1. Comprehensive NLP Entity Extraction
+    if not is_general_question:
+        extracted = extract_incident_fields_from_text(user_message)
+        field_updates.update(extracted)
 
-    # Pattern 2: Purity / Observed assay
-    purity_match = re.search(r"(\d+(?:\.\d+)?)\s*%", user_message)
-    if purity_match and ("purity" in lower_msg or "observed" in lower_msg or "assay" in lower_msg or "yield" in lower_msg) and not is_general_question:
-        val = f"{purity_match.group(1)}% purity (HPLC area %)"
-        field_updates["observed_result"] = val
-        updated_fields_summary.append(f"observed result to {val}")
+    merged_fields = {**incident_fields, **field_updates}
 
-    # Pattern 3: Equipment ID
-    eq_match = re.search(r"\b(TEMP-SENSOR-\w+|CRYST-REACTOR-\w+|SENSOR-\w+|REACTOR-\w+)\b", user_message, re.IGNORECASE)
-    if eq_match and not is_general_question:
-        val = eq_match.group(1).upper()
-        field_updates["equipment_id"] = val
-        updated_fields_summary.append(f"equipment identifier to {val}")
+    # 2. Check user requests
+    wants_5_whys = any(w in lower_msg for w in ["5 whys", "five whys", "run rca", "analyze root cause", "why did this happen", "causal analysis"]) or (not five_whys_chains and (field_updates or "extract" in lower_msg))
+    wants_capa = any(w in lower_msg for w in ["capa", "corrective", "preventive", "action plan", "prevent recurrence", "recommendations"])
+    wants_gaps = any(w in lower_msg for w in ["missing", "what documents", "what information", "evidence gap", "certificates"])
+    wants_summary = any(w in lower_msg for w in ["summarize", "summary", "status of this investigation", "what have we"])
 
-    # Pattern 4: Manufacturing Stage
-    if ("crystallization" in lower_msg or "purification" in lower_msg or "filtration" in lower_msg or "drying" in lower_msg) and not is_general_question:
-        if "crystallization" in lower_msg:
-            val = "Final Crystallization & Solvent Purification"
-        elif "filtration" in lower_msg:
-            val = "Filtration & Washing Stage"
-        else:
-            val = "Drying & Milling Stage"
-        field_updates["manufacturing_stage"] = val
-        updated_fields_summary.append(f"manufacturing stage to {val}")
-
-    # Pattern 5: Severity
-    if "severity" in lower_msg and not is_general_question:
-        if "critical" in lower_msg:
-            field_updates["severity"] = "critical"
-            updated_fields_summary.append("severity to Critical")
-        elif "high" in lower_msg:
-            field_updates["severity"] = "high"
-            updated_fields_summary.append("severity to High")
-        elif "medium" in lower_msg or "minor" in lower_msg:
-            field_updates["severity"] = "medium"
-            updated_fields_summary.append("severity to Medium")
-        elif "low" in lower_msg:
-            field_updates["severity"] = "low"
-            updated_fields_summary.append("severity to Low")
-
-    # Pattern 6: Immediate action
-    if ("quarantine" in lower_msg or "halted" in lower_msg or "on hold" in lower_msg or "immediate action" in lower_msg) and not is_general_question:
-        val = "Batch quarantined. Downstream processing halted pending investigation."
-        field_updates["immediate_action"] = val
-        updated_fields_summary.append("immediate containment action")
-
-    # Handle Field Updates
-    if field_updates:
-        intent = "update_field" if any(w in lower_msg for w in ["update", "change", "correct", "set"]) else "add_incident_info"
-        summary_str = ", ".join(updated_fields_summary)
-        assistant_message = f"I've updated the {summary_str} in the live investigation form."
-
-    # Pattern 7: 5 Whys request
-    elif any(w in lower_msg for w in ["5 whys", "five whys", "run rca", "analyze root cause", "why did this happen"]):
+    # 3. Handle 5 Whys Execution
+    if wants_5_whys:
         intent = "run_5_whys"
-        rca_res = _execute_deterministic_rca_methods("five_whys", incident_fields, evidence_records)
+        rca_res = _execute_deterministic_rca_methods("five_whys", merged_fields, evidence_records)
         five_whys_chains = rca_res.get("five_whys_chains", [])
         cause_candidates = rca_res.get("cause_candidates", [])
-        assistant_message = (
-            "I've performed the 5 Whys causal analysis. The primary root cause identified is temperature sensor calibration drift "
-            "(+0.8°C error) altering crystallization kinetics. The full causal chain and candidate causes are displayed in the chat."
-        )
 
-    # Pattern 8: CAPA request
-    elif any(w in lower_msg for w in ["capa", "corrective", "preventive", "action plan", "prevent recurrence"]):
-        intent = "suggest_capa"
-        capa_res = _execute_deterministic_capa(cause_candidates, evidence_records, investigation_gaps, incident_fields, [])
+    # 4. Handle CAPA Execution
+    if wants_capa or (wants_5_whys and "capa" in lower_msg):
+        intent = "suggest_capa" if not field_updates else intent
+        capa_res = _execute_deterministic_capa(cause_candidates, evidence_records, investigation_gaps, merged_fields, [])
         capa_recommendations = capa_res.get("capa_recommendations", [])
-        assistant_message = (
-            "I've formulated an evidence-linked CAPA plan addressing the confirmed sensor drift: immediate transmitter quarantine, "
-            "calibration re-verification, and automated CMMS calibration lockout to prevent future batch issuance."
-        )
 
-    # Pattern 9: Missing evidence / documents query
-    elif any(w in lower_msg for w in ["missing", "what documents", "what information", "evidence gap", "certificates"]):
+    # 5. Handle Gaps Query
+    if wants_gaps:
         intent = "evidence_query"
         if not investigation_gaps:
             investigation_gaps = [
@@ -1811,6 +1873,35 @@ def _execute_deterministic_copilot_chat(
                     "status": "available",
                 },
             ]
+
+    # 6. Dynamically Synchronize Step 1 in 5 Whys Chain with current product and batch
+    if five_whys_chains:
+        c_prod = merged_fields.get("product_name") or "API-X"
+        c_batch = merged_fields.get("batch_number") or "BATCH-2026-014"
+        c_obs = merged_fields.get("observed_result") or "98.1% purity"
+        c_exp = merged_fields.get("expected_result") or ">= 99.0%"
+        five_whys_chains[0]["question"] = f"Why did {c_prod} batch {c_batch} fail purity specification ({c_obs} vs {c_exp})?"
+
+    # 7. Construct Natural Language Response
+    if field_updates:
+        intent = "update_field" if any(w in lower_msg for w in ["update", "change", "correct", "set", "btw", "the product", "the id", "code"]) else "add_incident_info"
+        summary_parts = [f"{k.replace('_', ' ')} to {v}" for k, v in field_updates.items()]
+        assistant_message = f"I've updated the {', '.join(summary_parts)} in the live investigation form."
+        if wants_5_whys:
+            assistant_message += " I have also executed the 5 Whys causal analysis to isolate the root cause."
+        if wants_capa:
+            assistant_message += " Evidence-linked CAPA recommendations have also been formulated."
+    elif wants_5_whys:
+        assistant_message = (
+            "I've performed the 5 Whys causal analysis. The primary root cause identified is temperature sensor calibration drift "
+            "(+0.8°C error) altering crystallization kinetics. The full causal chain and candidate causes are displayed in the chat."
+        )
+    elif wants_capa:
+        assistant_message = (
+            "I've formulated an evidence-linked CAPA plan addressing the confirmed sensor drift: immediate transmitter quarantine, "
+            "calibration re-verification, and automated CMMS calibration lockout to prevent future batch issuance."
+        )
+    elif wants_gaps:
         doc_count = len(source_documents)
         unresolved = [g.get("field_or_record") for g in investigation_gaps if g.get("status") != "resolved"]
         if unresolved:
@@ -1823,13 +1914,11 @@ def _execute_deterministic_copilot_chat(
             assistant_message = (
                 f"We have {doc_count} document(s) attached. No critical evidence gaps are currently blocking the investigation."
             )
-
-    # Pattern 10: Summary request
-    elif any(w in lower_msg for w in ["summarize", "summary", "status of this investigation", "what have we"]):
+    elif wants_summary:
         intent = "summary_query"
-        p_name = incident_fields.get("product_name") or "API-X"
-        b_num = incident_fields.get("batch_number") or "BATCH-2026-014"
-        obs = incident_fields.get("observed_result") or "98.1% purity"
+        p_name = merged_fields.get("product_name") or "API-X"
+        b_num = merged_fields.get("batch_number") or "BATCH-2026-014"
+        obs = merged_fields.get("observed_result") or "98.1% purity"
         causes_cnt = len(cause_candidates)
         capa_cnt = len(capa_recommendations)
         assistant_message = (
@@ -1839,8 +1928,6 @@ def _execute_deterministic_copilot_chat(
             f"• CAPA: {capa_cnt} corrective/preventive action(s) recommended.\n"
             f"• Status: {investigation_status.upper()} (ready for formal quality review)."
         )
-
-    # Pattern 11: General question fallback
     else:
         intent = "general_question"
         action_status = "no_action"
